@@ -50,7 +50,7 @@ const pool = mysql.createPool({
 });
 
 /**
- * Automatically creates the Database & all required Tables
+ * Automatically creates the Database & all required Tables, and runs safe column cleanups.
  */
 async function initDatabase() {
   try {
@@ -136,20 +136,16 @@ async function initDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
-    // 4. Table: posts (Generic Business Posts with Target Locations & Multi-Images)
+    // 4. Table: posts (Cleaned Schema - structured targeting via target_locations_json)
     await connection.query(`
       CREATE TABLE IF NOT EXISTS posts (
         post_id INT AUTO_INCREMENT PRIMARY KEY,
         business_id INT NOT NULL,
         user_id INT NOT NULL,
-        post_type VARCHAR(50) DEFAULT 'post',
         title VARCHAR(255) NOT NULL,
         subtitle VARCHAR(255),
         description TEXT,
         target_location VARCHAR(255) NOT NULL,
-        target_city VARCHAR(100),
-        target_district VARCHAR(100),
-        target_state VARCHAR(100) DEFAULT 'Tamil Nadu',
         target_locations_json TEXT,
         images TEXT,
         brand_logo TEXT,
@@ -158,10 +154,39 @@ async function initDatabase() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_business_id (business_id),
         INDEX idx_user_id (user_id),
-        INDEX idx_location_active (target_location, is_active),
+        INDEX idx_is_active (is_active),
         INDEX idx_created (created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+
+    // Safe migration: Clean up confirmed unused legacy columns from posts if they exist
+    try {
+      const [cols] = await connection.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'posts'
+      `, [DB_NAME]);
+      const colNames = cols.map(c => c.COLUMN_NAME);
+
+      if (colNames.includes('target_city')) {
+        await connection.query('ALTER TABLE posts DROP COLUMN target_city');
+        console.log('[Migration] Dropped unused column target_city from posts');
+      }
+      if (colNames.includes('target_district')) {
+        await connection.query('ALTER TABLE posts DROP COLUMN target_district');
+        console.log('[Migration] Dropped unused column target_district from posts');
+      }
+      if (colNames.includes('target_state')) {
+        await connection.query('ALTER TABLE posts DROP COLUMN target_state');
+        console.log('[Migration] Dropped unused column target_state from posts');
+      }
+      if (colNames.includes('post_type')) {
+        await connection.query('ALTER TABLE posts DROP COLUMN post_type');
+        console.log('[Migration] Dropped unused column post_type from posts');
+      }
+    } catch (migErr) {
+      console.log('[Migration] Posts table cleanup notice:', migErr.message);
+    }
 
     // 5. Table: saved_posts (Bookmarks for authenticated users)
     await connection.query(`
@@ -197,7 +222,7 @@ async function initDatabase() {
         (2, 'test2@gmail.com', 'Devi Priya', '9876543211', '+91', '45 West Veli Street, Madurai Main, Madurai, Tamil Nadu 625001', 'Madurai Main', 'Madurai', 'Tamil Nadu', 'India', 9.9252, 78.1198);
     `);
 
-    // Seed demo business profile if empty
+    // Seed demo business profile and posts if empty
     const [bizCount] = await connection.query('SELECT COUNT(*) as cnt FROM business_profile');
     if (bizCount[0].cnt === 0) {
       await connection.query(`
@@ -208,10 +233,10 @@ async function initDatabase() {
       `);
 
       await connection.query(`
-        INSERT INTO posts (post_id, business_id, user_id, post_type, title, subtitle, description, target_location, target_city, target_district, target_state, target_locations_json, images, brand_logo, is_active)
+        INSERT INTO posts (post_id, business_id, user_id, title, subtitle, description, target_location, target_locations_json, images, brand_logo, is_active)
         VALUES
-          (1, 1, 1, 'post', 'Advanced Smile Designing & Laser Dentistry', 'Apex Dental Care • Palayamkottai', 'Experience painless laser dentistry and precision smile designing with our modern dental equipment. Book your consultation today.', 'Tirunelveli, Palayamkottai', 'Tirunelveli', 'Tirunelveli', 'Tamil Nadu', '[{\"placeId\":\"city_tirunelveli\",\"name\":\"Tirunelveli\",\"type\":\"city\",\"state\":\"Tamil Nadu\",\"country\":\"India\"},{\"placeId\":\"loc_palayamkottai\",\"name\":\"Palayamkottai\",\"type\":\"locality\",\"city\":\"Tirunelveli\",\"state\":\"Tamil Nadu\",\"country\":\"India\"}]', '[\"https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=600&q=80\",\"https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?auto=format&fit=crop&w=600&q=80\"]', 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=150&q=80', 1),
-          (2, 2, 1, 'post', 'Wireless Audio & Smart Gadgets Arrival', 'Nova Tech Solutions • Madurai', 'Check out the new range of active noise cancelling wireless earphones and fast magnetic chargers at Nova Tech.', 'Madurai, Madurai Main', 'Madurai', 'Madurai', 'Tamil Nadu', '[{\"placeId\":\"city_madurai\",\"name\":\"Madurai\",\"type\":\"city\",\"state\":\"Tamil Nadu\",\"country\":\"India\"}]', '[\"https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=600&q=80\",\"https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80\"]', 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=150&q=80', 1);
+          (1, 1, 1, 'Advanced Smile Designing & Laser Dentistry', 'Apex Dental Care • Palayamkottai', 'Experience painless laser dentistry and precision smile designing with our modern dental equipment. Book your consultation today.', 'Tirunelveli, Palayamkottai', '[{\"placeId\":\"city_tirunelveli\",\"name\":\"Tirunelveli\",\"type\":\"city\",\"state\":\"Tamil Nadu\",\"country\":\"India\"},{\"placeId\":\"loc_palayamkottai\",\"name\":\"Palayamkottai\",\"type\":\"locality\",\"city\":\"Tirunelveli\",\"state\":\"Tamil Nadu\",\"country\":\"India\"}]', '[\"https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=600&q=80\",\"https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?auto=format&fit=crop&w=600&q=80\"]', 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=150&q=80', 1),
+          (2, 2, 1, 'Wireless Audio & Smart Gadgets Arrival', 'Nova Tech Solutions • Madurai', 'Check out the new range of active noise cancelling wireless earphones and fast magnetic chargers at Nova Tech.', 'Madurai, Madurai Main', '[{\"placeId\":\"city_madurai\",\"name\":\"Madurai\",\"type\":\"city\",\"state\":\"Tamil Nadu\",\"country\":\"India\"}]', '[\"https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=600&q=80\",\"https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80\"]', 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=150&q=80', 1);
       `);
     }
 
@@ -311,7 +336,461 @@ async function sendOtpEmail(email, otp) {
 }
 
 // ==========================================
-// 4. HELPER FUNCTIONS & LOGIC
+// 4. HIERARCHICAL LOCATION MATCHING ENGINE
+// ==========================================
+
+function normalizeStr(str) {
+  if (str === null || str === undefined) return '';
+  return str.toString().trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Returns hierarchical rank for a location type.
+ * Lower number = broader geographic scope.
+ */
+function getLocationRank(type) {
+  const t = normalizeStr(type);
+  if (!t) return 4;
+  if (t === 'country' || t === 'nation') return 1;
+  if (['state', 'province', 'region', 'administrative_area_level_1', 'territory'].includes(t)) return 2;
+  if (['city', 'district', 'county', 'administrative_area_level_2', 'administrative_area_level_3', 'town', 'municipality'].includes(t)) return 3;
+  if (['locality', 'sublocality', 'neighborhood', 'sublocality_level_1', 'sublocality_level_2', 'area', 'postal_code'].includes(t)) return 4;
+  return 5;
+}
+
+/**
+ * Calculate distance between two GPS coordinates in kilometers (Haversine formula).
+ */
+function calculateDistanceKm(lat1, lon1, lat2, lon2) {
+  const nLat1 = parseFloat(lat1);
+  const nLon1 = parseFloat(lon1);
+  const nLat2 = parseFloat(lat2);
+  const nLon2 = parseFloat(lon2);
+
+  if (isNaN(nLat1) || isNaN(nLon1) || isNaN(nLat2) || isNaN(nLon2)) return Infinity;
+  if (nLat1 === 0 && nLon1 === 0) return Infinity;
+  if (nLat2 === 0 && nLon2 === 0) return Infinity;
+
+  const R = 6371; // Earth's radius in km
+  const dLat = (nLat2 - nLat1) * (Math.PI / 180);
+  const dLon = (nLon2 - nLon1) * (Math.PI / 180);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(nLat1 * (Math.PI / 180)) *
+    Math.cos(nLat2 * (Math.PI / 180)) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/**
+ * Normalizes user registration location into structured object.
+ */
+function normalizeUserLocation(user) {
+  if (!user) {
+    return {
+      locality: '',
+      city: '',
+      state: '',
+      country: '',
+      latitude: 0,
+      longitude: 0,
+      full_address: ''
+    };
+  }
+
+  return {
+    locality: normalizeStr(user.locality || user.area || ''),
+    city: normalizeStr(user.city || user.district || ''),
+    state: normalizeStr(user.state || ''),
+    country: normalizeStr(user.country || ''),
+    latitude: parseFloat(user.latitude) || 0,
+    longitude: parseFloat(user.longitude) || 0,
+    full_address: normalizeStr(user.full_address || user.address || '')
+  };
+}
+
+/**
+ * Normalizes a single target location object.
+ */
+function normalizeTargetLocationItem(item) {
+  if (!item) return null;
+
+  if (typeof item === 'string') {
+    const clean = normalizeStr(item);
+    return {
+      placeId: '',
+      name: clean,
+      type: 'city',
+      country: '',
+      countryCode: '',
+      state: '',
+      city: clean,
+      locality: '',
+      latitude: 0,
+      longitude: 0
+    };
+  }
+
+  const name = normalizeStr(item.name || item.cityName || item.stateName || item.countryName || '');
+  const type = normalizeStr(item.type || 'locality');
+  const country = normalizeStr(item.country || item.countryName || '');
+  const countryCode = normalizeStr(item.countryCode || '');
+  const state = normalizeStr(item.state || item.stateName || '');
+  const city = normalizeStr(item.city || item.cityName || '');
+  const locality = normalizeStr(item.locality || (type === 'locality' ? name : ''));
+
+  return {
+    placeId: item.placeId || item.place_id || '',
+    name: name,
+    type: type,
+    country: country,
+    countryCode: countryCode,
+    state: state,
+    city: city,
+    locality: locality,
+    latitude: parseFloat(item.latitude) || 0,
+    longitude: parseFloat(item.longitude) || 0
+  };
+}
+
+/**
+ * Extracts and parses target locations from post record.
+ */
+function extractPostTargetLocations(post) {
+  if (!post) return [];
+
+  const rawJson = post.target_locations_json || post.target_locations || post.targetLocationItems;
+  let list = [];
+
+  if (rawJson) {
+    if (Array.isArray(rawJson)) {
+      list = rawJson;
+    } else if (typeof rawJson === 'string' && rawJson.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(rawJson);
+        if (Array.isArray(parsed)) list = parsed;
+      } catch (_) {
+        // Not JSON
+      }
+    }
+  }
+
+  // Fallback: parse from target_location string if JSON was empty
+  if (list.length === 0 && post.target_location && typeof post.target_location === 'string') {
+    const parts = post.target_location.split(',').map(s => s.trim()).filter(Boolean);
+    list = parts.map(p => ({
+      name: p,
+      type: 'city',
+      city: p
+    }));
+  }
+
+  return list
+    .map(normalizeTargetLocationItem)
+    .filter(item => item && (item.name || item.city || item.state || item.country));
+}
+
+/**
+ * Checks if two target location objects refer to the exact same geographic entity.
+ */
+function isSameLocation(a, b) {
+  if (a.placeId && b.placeId && a.placeId === b.placeId) return true;
+  if (a.name === b.name && getLocationRank(a.type) === getLocationRank(b.type)) {
+    const aCountry = a.country || a.countryCode;
+    const bCountry = b.country || b.countryCode;
+    if (aCountry && bCountry && aCountry !== bCountry) return false;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Checks if location [parent] geographically contains location [child].
+ * Returns true if parent is an ancestor of child on the same geographic branch.
+ */
+function isLocationContained(parent, child) {
+  if (!parent || !child) return false;
+  if (isSameLocation(parent, child)) return false;
+
+  const parentRank = getLocationRank(parent.type);
+  const childRank = getLocationRank(child.type);
+
+  // Parent must be strictly broader in scope
+  if (parentRank >= childRank) return false;
+
+  const pCountry = parent.country || (parentRank === 1 ? parent.name : '');
+  const cCountry = child.country || (childRank === 1 ? child.name : '');
+  const pCountryCode = parent.countryCode || '';
+  const cCountryCode = child.countryCode || '';
+
+  const sameCountry =
+    !pCountry ||
+    !cCountry ||
+    pCountry === cCountry ||
+    (pCountryCode && cCountryCode && pCountryCode === cCountryCode) ||
+    child.name === pCountry;
+
+  // 1. Parent is Country (rank 1)
+  if (parentRank === 1) {
+    if (sameCountry) return true;
+    if (child.country === parent.name || child.name === parent.name) return true;
+    if (pCountryCode && cCountryCode === pCountryCode) return true;
+    return false;
+  }
+
+  // State, City, Locality must share country
+  if (!sameCountry) return false;
+
+  const pState = parent.state || (parentRank === 2 ? parent.name : '');
+  const cState = child.state || (childRank === 2 ? child.name : '');
+
+  // 2. Parent is State (rank 2)
+  if (parentRank === 2) {
+    if (cState && (cState === pState || child.name === pState)) {
+      return true;
+    }
+    // Proximity fallback if coordinates exist (< 350 km)
+    const dist = calculateDistanceKm(parent.latitude, parent.longitude, child.latitude, child.longitude);
+    if (dist < 350) return true;
+    return false;
+  }
+
+  const pCity = parent.city || (parentRank === 3 ? parent.name : '');
+  const cCity = child.city || (childRank === 3 ? child.name : '');
+
+  // 3. Parent is City / District (rank 3)
+  if (parentRank === 3) {
+    if (cCity && (cCity === pCity || child.name === pCity)) {
+      return true;
+    }
+    // Locality inside city proximity check (< 45 km)
+    const dist = calculateDistanceKm(parent.latitude, parent.longitude, child.latitude, child.longitude);
+    if (dist < 45) return true;
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Applies specificity elimination rule:
+ * When multiple target locations contain one another (e.g. parent + child):
+ * The more specific descendant target takes precedence.
+ * Broader parent is eliminated from effective audience.
+ * Unrelated locations are preserved (OR behavior).
+ */
+function getEffectiveTargetLocations(targetLocations) {
+  if (!targetLocations || targetLocations.length <= 1) {
+    return targetLocations || [];
+  }
+
+  // Deduplicate identical items
+  const uniqueTargets = [];
+  for (const item of targetLocations) {
+    if (!uniqueTargets.some(e => isSameLocation(e, item))) {
+      uniqueTargets.push(item);
+    }
+  }
+
+  // Keep only targets that do NOT have a more-specific descendant in the list
+  const effective = [];
+  for (let i = 0; i < uniqueTargets.length; i++) {
+    const candidate = uniqueTargets[i];
+    let hasMoreSpecificChild = false;
+
+    for (let j = 0; j < uniqueTargets.length; j++) {
+      if (i === j) continue;
+      const other = uniqueTargets[j];
+
+      // If 'candidate' contains 'other', then 'other' is a more specific child
+      if (isLocationContained(candidate, other)) {
+        hasMoreSpecificChild = true;
+        break;
+      }
+    }
+
+    if (!hasMoreSpecificChild) {
+      effective.push(candidate);
+    }
+  }
+
+  return effective;
+}
+
+/**
+ * Tests whether a user's registration location falls within a specific target location.
+ */
+function isUserCoveredByTarget(target, userLoc) {
+  if (!target || !userLoc) return false;
+
+  const rank = getLocationRank(target.type);
+  const targetName = target.name;
+
+  const userCountry = userLoc.country;
+  const userState = userLoc.state;
+  const userCity = userLoc.city;
+  const userLocality = userLoc.locality;
+
+  const targetCountry = target.country || (rank === 1 ? targetName : '');
+  const targetState = target.state || (rank === 2 ? targetName : '');
+  const targetCity = target.city || (rank === 3 ? targetName : '');
+  const targetLocality = target.locality || (rank >= 4 ? targetName : '');
+
+  // 1. Target is Country (rank 1)
+  if (rank === 1) {
+    if (userCountry && (userCountry === targetName || userCountry === targetCountry)) return true;
+    if (target.countryCode && userLoc.countryCode && target.countryCode === userLoc.countryCode) return true;
+    if (userLoc.full_address && (userLoc.full_address.includes(targetName) || (targetCountry && userLoc.full_address.includes(targetCountry)))) return true;
+    return false;
+  }
+
+  // If user has country specified and target has country specified, they must match
+  if (userCountry && targetCountry && userCountry !== targetCountry) {
+    return false;
+  }
+
+  // 2. Target is State (rank 2)
+  if (rank === 2) {
+    if (userState && (userState === targetName || userState === targetState)) return true;
+    if (userLoc.full_address && userLoc.full_address.includes(targetName)) return true;
+    const dist = calculateDistanceKm(target.latitude, target.longitude, userLoc.latitude, userLoc.longitude);
+    if (dist < 350) return true;
+    return false;
+  }
+
+  // If user has state specified and target has state specified, they must match
+  if (userState && targetState && userState !== targetState) {
+    return false;
+  }
+
+  // 3. Target is City / District (rank 3)
+  if (rank === 3) {
+    // Exact city match
+    if (userCity && (userCity === targetName || userCity === targetCity)) return true;
+    // User locality matches city name or vice versa
+    if (userLocality && userLocality === targetName) return true;
+    // Address string match
+    if (userLoc.full_address && (userLoc.full_address.includes(targetName) || (targetCity && userLoc.full_address.includes(targetCity)))) {
+      return true;
+    }
+    // Coordinate proximity (< 45 km)
+    const dist = calculateDistanceKm(target.latitude, target.longitude, userLoc.latitude, userLoc.longitude);
+    if (dist < 45) return true;
+    return false;
+  }
+
+  // 4. Target is Locality / Sub-locality (rank 4)
+  if (rank >= 4) {
+    // Exact locality match
+    if (userLocality && (userLocality === targetName || userLocality === targetLocality)) {
+      return true;
+    }
+    // Proximity check (< 10 km)
+    const dist = calculateDistanceKm(target.latitude, target.longitude, userLoc.latitude, userLoc.longitude);
+    if (dist < 10) return true;
+
+    // Address containment check only if user locality is not an explicit different locality
+    if (userLoc.full_address && userLoc.full_address.includes(targetName)) {
+      if (!userLocality || userLocality.includes(targetName) || targetName.includes(userLocality)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  return false;
+}
+
+/**
+ * Primary matching function: determines if a post is visible to a given user.
+ */
+function isPostVisibleToUser(post, user) {
+  if (!post) return false;
+  if (!user) return true;
+
+  const userLoc = normalizeUserLocation(user);
+  const targets = extractPostTargetLocations(post);
+
+  if (targets.length === 0) {
+    if (!post.target_location) return true;
+    const cleanTarget = normalizeStr(post.target_location);
+    if (cleanTarget === 'all' || cleanTarget === '') return true;
+
+    if (userLoc.city && cleanTarget.includes(userLoc.city)) return true;
+    if (userLoc.locality && cleanTarget.includes(userLoc.locality)) return true;
+    if (userLoc.state && cleanTarget.includes(userLoc.state)) return true;
+    if (userLoc.country && cleanTarget.includes(userLoc.country)) return true;
+    if (userLoc.full_address && cleanTarget.split(',').some(part => userLoc.full_address.includes(part.trim()))) return true;
+    return false;
+  }
+
+  // Specificity Rule
+  const effectiveTargets = getEffectiveTargetLocations(targets);
+
+  for (const target of effectiveTargets) {
+    if (isUserCoveredByTarget(target, userLoc)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Filter an array of posts for a user, applying location targeting and optional client filters.
+ */
+function filterPostsForUser(posts, user, options = {}) {
+  if (!Array.isArray(posts)) return [];
+
+  const {
+    businessId,
+    searchQuery,
+    skipLocationCheck = false
+  } = options;
+
+  return posts.filter(post => {
+    // 1. Business Profile ID filter (if requested)
+    if (businessId) {
+      const bId = businessId.toString().replace(/^BP0*/i, '');
+      const postBId = (post.business_id || post.businessProfileId || '').toString().replace(/^BP0*/i, '');
+      if (bId !== postBId) return false;
+    }
+
+    // 2. Location Eligibility (enforced server-side)
+    if (!skipLocationCheck && user) {
+      if (!isPostVisibleToUser(post, user)) {
+        return false;
+      }
+    }
+
+    // 3. Search text filter (if requested)
+    if (searchQuery && searchQuery.trim().length > 0) {
+      const q = normalizeStr(searchQuery);
+      const title = normalizeStr(post.title || '');
+      const subtitle = normalizeStr(post.subtitle || '');
+      const desc = normalizeStr(post.description || '');
+      const bizName = normalizeStr(post.business_name || post.bizName || '');
+      const loc = normalizeStr(post.target_location || '');
+
+      const matchesSearch =
+        title.includes(q) ||
+        subtitle.includes(q) ||
+        desc.includes(q) ||
+        bizName.includes(q) ||
+        loc.includes(q);
+
+      if (!matchesSearch) return false;
+    }
+
+    return true;
+  });
+}
+
+// ==========================================
+// 5. HELPER FUNCTIONS & LOGIC
 // ==========================================
 const TEST_ACCOUNTS = {
   'test1@gmail.com': '123456',
@@ -732,8 +1211,8 @@ app.post(['/api/register-user', '/api/register'], async (req, res) => {
   }
 });
 
-// Authentication Middleware
-async function authenticateUser(req, res, next) {
+// User Resolution Helper (from Token, Headers, or Query)
+async function getUserFromRequest(req) {
   try {
     let user = null;
     const authHeader = req.headers['authorization'];
@@ -781,6 +1260,16 @@ async function authenticateUser(req, res, next) {
       if (rows && rows.length > 0) user = rows[0];
     }
 
+    return user;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Authentication Middleware
+async function authenticateUser(req, res, next) {
+  try {
+    const user = await getUserFromRequest(req);
     if (!user) {
       return res.status(401).json({ success: false, message: 'Authentication required. Please login.' });
     }
@@ -1169,9 +1658,6 @@ function formatPostRow(r, isSaved = false) {
     description: r.description || '',
     target_location: r.target_location,
     targetLocation: r.target_location,
-    target_city: r.target_city || null,
-    target_district: r.target_district || null,
-    target_state: r.target_state || 'Tamil Nadu',
     targetLocationItems: parsedTargetLocations,
     target_locations: parsedTargetLocations,
     images: parsedImages,
@@ -1187,7 +1673,7 @@ function formatPostRow(r, isSaved = false) {
 
 /**
  * POST /api/posts
- * Create a new generic Business Post
+ * Create a new generic Business Post with structured target locations
  */
 app.post('/api/posts', authenticateUser, async (req, res) => {
   try {
@@ -1223,8 +1709,8 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
     const postBrandLogo = bizRows[0].profile_image || null;
 
     const [result] = await pool.query(`
-      INSERT INTO posts (business_id, user_id, post_type, title, subtitle, description, target_location, target_city, target_district, target_state, target_locations_json, images, brand_logo, is_active)
-      VALUES (?, ?, 'post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      INSERT INTO posts (business_id, user_id, title, subtitle, description, target_location, target_locations_json, images, brand_logo, is_active)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
     `, [
       cleanBizId,
       userId,
@@ -1232,9 +1718,6 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
       postSubtitle,
       postDesc,
       targetLoc,
-      bizRows[0].city || null,
-      bizRows[0].city || null,
-      bizRows[0].state || 'Tamil Nadu',
       targetLocsJson,
       imagesJson,
       postBrandLogo
@@ -1254,92 +1737,85 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
       post: formatPostRow(insertedRows[0])
     });
   } catch (error) {
+    console.error('[Posts] Create error:', error.message);
     return res.status(500).json({ success: false, message: 'Error creating post.' });
   }
 });
 
 /**
- * GET /api/posts & GET /api/explore-posts
- * Filter posts by user location & target locations hierarchy
+ * GET /api/posts, GET /api/explore-posts, and GET /api/explore
+ * Server-side location targeting enforcement for Explore discovery feed
  */
-app.get(['/api/posts', '/api/explore-posts'], async (req, res) => {
+app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) => {
   try {
-    const { location, target_location, locality, city, state, country, business_id, user_id, search, q } = req.query;
+    const { business_id, search, q } = req.query;
+    const user = await getUserFromRequest(req);
 
-    let query = `
+    // 1. Direct Business Profile Posts (when viewing a specific business's own posts)
+    if (business_id) {
+      const cleanBizId = parseInt(business_id.toString().replace(/^BP0*/i, ''), 10);
+      if (!isNaN(cleanBizId)) {
+        const [rows] = await pool.query(`
+          SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+          FROM posts p
+          LEFT JOIN business_profile b ON p.business_id = b.business_id
+          WHERE p.business_id = ? AND p.is_active = 1
+          ORDER BY p.created_at DESC
+        `, [cleanBizId]);
+
+        let savedPostIds = new Set();
+        if (user) {
+          const [savedRows] = await pool.query('SELECT post_id FROM saved_posts WHERE user_id = ?', [user.id]);
+          savedPostIds = new Set(savedRows.map(s => s.post_id));
+        }
+
+        const posts = rows.map(r => formatPostRow(r, savedPostIds.has(r.post_id)));
+        return res.status(200).json({ success: true, count: posts.length, posts });
+      }
+    }
+
+    // 2. Explore discovery feed - fetch active candidate posts
+    const [allRows] = await pool.query(`
       SELECT p.*, b.business_name, b.profile_image AS business_profile_image
       FROM posts p
       LEFT JOIN business_profile b ON p.business_id = b.business_id
       WHERE p.is_active = 1
-    `;
-    const params = [];
+      ORDER BY p.created_at DESC
+    `);
 
-    if (business_id) {
-      const cleanBizId = parseInt(business_id.toString().replace(/^BP0*/i, ''), 10);
-      if (!isNaN(cleanBizId)) {
-        query += ` AND p.business_id = ?`;
-        params.push(cleanBizId);
+    // Determine target location context (from authenticated user registration or query fallback)
+    let userLocationContext = user;
+    if (!userLocationContext) {
+      const { locality, city, state, country, location, target_location } = req.query;
+      if (locality || city || state || country || location || target_location) {
+        userLocationContext = {
+          locality: locality || '',
+          city: city || location || target_location || '',
+          state: state || '',
+          country: country || 'India',
+          full_address: location || target_location || ''
+        };
       }
     }
 
-    if (user_id) {
-      const cleanUserId = parseInt(user_id.toString().replace(/^U0*/i, ''), 10);
-      if (!isNaN(cleanUserId)) {
-        query += ` AND p.user_id = ?`;
-        params.push(cleanUserId);
-      }
+    // Apply location targeting engine (hierarchical containment + specificity precedence) + user search
+    const eligibleRows = filterPostsForUser(allRows, userLocationContext, {
+      searchQuery: search || q,
+      skipLocationCheck: !userLocationContext
+    });
+
+    // Check saved bookmarks for authenticated user
+    let savedPostIds = new Set();
+    if (user) {
+      const [savedRows] = await pool.query('SELECT post_id FROM saved_posts WHERE user_id = ?', [user.id]);
+      savedPostIds = new Set(savedRows.map(s => s.post_id));
     }
 
-    const locFilter = location || target_location;
-    if (locFilter && locFilter.trim().length > 0 && locFilter.toLowerCase() !== 'all') {
-      const locTerms = locFilter.split(',').map(s => s.trim()).filter(Boolean);
-      if (locTerms.length > 0) {
-        const conditions = locTerms.map(() => `(p.target_location LIKE ? OR p.target_locations_json LIKE ? OR b.city LIKE ? OR b.state LIKE ?)`).join(' OR ');
-        query += ` AND (${conditions})`;
-        for (const term of locTerms) {
-          const pattern = `%${term}%`;
-          params.push(pattern, pattern, pattern, pattern);
-        }
-      }
-    }
-
-    // Specific structured location matching
-    if (locality || city || state || country) {
-      const structuredConditions = [];
-      if (locality && locality.trim()) {
-        const locPattern = `%${locality.trim()}%`;
-        structuredConditions.push(`p.target_location LIKE ? OR p.target_locations_json LIKE ?`);
-        params.push(locPattern, locPattern);
-      }
-      if (city && city.trim()) {
-        const cityPattern = `%${city.trim()}%`;
-        structuredConditions.push(`p.target_location LIKE ? OR p.target_city LIKE ? OR p.target_locations_json LIKE ? OR b.city LIKE ?`);
-        params.push(cityPattern, cityPattern, cityPattern, cityPattern);
-      }
-      if (state && state.trim()) {
-        const statePattern = `%${state.trim()}%`;
-        structuredConditions.push(`p.target_state LIKE ? OR p.target_locations_json LIKE ? OR b.state LIKE ?`);
-        params.push(statePattern, statePattern, statePattern);
-      }
-      if (structuredConditions.length > 0) {
-        query += ` AND (${structuredConditions.join(' OR ')})`;
-      }
-    }
-
-    const searchTerm = search || q;
-    if (searchTerm && searchTerm.trim().length > 0) {
-      query += ` AND (p.title LIKE ? OR p.subtitle LIKE ? OR p.description LIKE ? OR b.business_name LIKE ?)`;
-      const sPattern = `%${searchTerm.trim()}%`;
-      params.push(sPattern, sPattern, sPattern, sPattern);
-    }
-
-    query += ` ORDER BY p.created_at DESC`;
-
-    const [rows] = await pool.query(query, params);
-    const posts = rows.map(r => formatPostRow(r));
+    const posts = eligibleRows.map(r => formatPostRow(r, savedPostIds.has(r.post_id)));
 
     return res.status(200).json({ success: true, count: posts.length, posts });
   } catch (error) {
+    console.error('[Posts/Explore] Error fetching feed:', error.message);
     return res.status(500).json({ success: false, message: 'Error fetching posts.' });
   }
 });
@@ -1553,3 +2029,15 @@ async function startServer() {
 }
 
 startServer();
+
+module.exports = {
+  app,
+  pool,
+  isPostVisibleToUser,
+  filterPostsForUser,
+  normalizeUserLocation,
+  extractPostTargetLocations,
+  getEffectiveTargetLocations,
+  isLocationContained,
+  isUserCoveredByTarget
+};

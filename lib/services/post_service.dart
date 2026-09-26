@@ -179,14 +179,17 @@ class PostService extends ChangeNotifier {
 
   /// Fetch location-targeted posts for Explore feed
   Future<List<PostItem>> fetchPosts({
+    String? authToken,
+    String? userId,
+    String? userEmail,
     String? location,
     String? locality,
     String? city,
     String? state,
     String? country,
     String? businessId,
-    String? userId,
     String? search,
+    String? postType,
   }) async {
     _isLoading = true;
     notifyListeners();
@@ -218,8 +221,15 @@ class PostService extends ChangeNotifier {
         queryParams['search'] = search.trim();
       }
 
+      final headers = <String, String>{
+        'Content-Type': 'application/json',
+        if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+        if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
+        if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
+      };
+
       final uri = Uri.parse('$_baseUrl/api/posts').replace(queryParameters: queryParams.isNotEmpty ? queryParams : null);
-      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      final response = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;

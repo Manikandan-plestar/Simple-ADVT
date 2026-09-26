@@ -50,12 +50,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
     // Fetch posts targeted for the user's registered location
     await postService.fetchPosts(
+      authToken: user.authToken,
+      userId: user.userId,
+      userEmail: user.email,
       location: user.city.isNotEmpty ? user.city : (user.locality.isNotEmpty ? user.locality : user.state),
       locality: user.locality,
       city: user.city,
       state: user.state,
       country: user.country,
-      userId: user.userId,
     );
 
     if (user.userId.isNotEmpty) {
