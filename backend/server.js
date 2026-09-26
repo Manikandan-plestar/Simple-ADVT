@@ -1,0 +1,1555 @@
+const express = require('express');
+const cors = require('cors');
+const dotenv = require('dotenv');
+const mysql = require('mysql2/promise');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+const jwt = require('jsonwebtoken');
+const fs = require('fs');
+const http = require('http');
+const https = require('https');
+
+// Load environment variables from .env
+dotenv.config();
+
+// ==========================================
+// 1. CONFIGURATION & ENVIRONMENT VARIABLES
+// ==========================================
+const PORT = parseInt(process.env.PORT || '5000', 10);
+const DB_HOST = process.env.DB_HOST || 'localhost';
+const DB_PORT = parseInt(process.env.DB_PORT || '3306', 10);
+const DB_USER = process.env.DB_USER || 'root';
+const DB_PASSWORD = process.env.DB_PASSWORD || '';
+const DB_NAME = process.env.DB_NAME || 'simple_advt';
+
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
+const SMTP_SECURE = process.env.SMTP_SECURE !== 'false';
+const SMTP_USER = process.env.SMTP_USER || '';
+const SMTP_PASS = process.env.SMTP_PASS || '';
+const FROM_EMAIL = process.env.FROM_EMAIL || `"Simple ADVT" <${SMTP_USER || 'no-reply@simpleadvt.com'}>`;
+
+const JWT_SECRET = process.env.JWT_SECRET || 'simple_advt_jwt_super_secret_key_2026_xyz';
+const OTP_EXPIRY_MINUTES = parseInt(process.env.OTP_EXPIRY_MINUTES || '5', 10);
+const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX_ATTEMPTS || '3', 10);
+const RATE_LIMIT_WINDOW_MIN = parseInt(process.env.RATE_LIMIT_WINDOW_MINUTES || '10', 10);
+
+// ==========================================
+// 2. MYSQL DATABASE CONNECTION POOL & SCHEMA
+// ==========================================
+const pool = mysql.createPool({
+  host: DB_HOST,
+  port: DB_PORT,
+  user: DB_USER,
+  password: DB_PASSWORD,
+  database: DB_NAME,
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  timezone: '+00:00'
+});
+
+/**
+ * Automatically creates the Database & all required Tables
+ */
+async function initDatabase() {
+  try {
+    const rawConnection = await mysql.createConnection({
+      host: DB_HOST,
+      port: DB_PORT,
+      user: DB_USER,
+      password: DB_PASSWORD
+    });
+
+    await rawConnection.query(`
+      CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`
+      CHARACTER SET utf8mb4 
+      COLLATE utf8mb4_unicode_ci;
+    `);
+    await rawConnection.end();
+
+    const connection = await pool.getConnection();
+    console.log(`[Database] Connected successfully to MySQL database: "${DB_NAME}"`);
+
+    // 1. Table: email_otp
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS email_otp (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(255) NOT NULL,
+        otp VARCHAR(6) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        is_used TINYINT DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_email (email),
+        INDEX idx_expires (expires_at),
+        INDEX idx_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 2. Table: users (One Email = One User Account)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        email VARCHAR(255) NOT NULL UNIQUE,
+        full_name VARCHAR(255) NOT NULL,
+        mobile_number VARCHAR(20) DEFAULT '',
+        country_code VARCHAR(10) DEFAULT '+91',
+        full_address TEXT NOT NULL,
+        locality VARCHAR(100),
+        city VARCHAR(100),
+        state VARCHAR(100),
+        country VARCHAR(100) DEFAULT 'India',
+        latitude DECIMAL(10, 7) DEFAULT 0.0,
+        longitude DECIMAL(10, 7) DEFAULT 0.0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_email (email),
+        INDEX idx_city (city),
+        INDEX idx_state (state)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 3. Table: business_profile (Business profiles owned by users)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS business_profile (
+        business_id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        business_name VARCHAR(255) NOT NULL,
+        category VARCHAR(100) DEFAULT 'General Store',
+        business_phone VARCHAR(30) NOT NULL,
+        country_code VARCHAR(10) DEFAULT '+91',
+        full_address TEXT NOT NULL,
+        locality VARCHAR(100),
+        city VARCHAR(100),
+        state VARCHAR(100),
+        country VARCHAR(100) DEFAULT 'India',
+        latitude DECIMAL(10, 7) DEFAULT 0.0,
+        longitude DECIMAL(10, 7) DEFAULT 0.0,
+        profile_image TEXT,
+        images TEXT,
+        about TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_user_id (user_id),
+        INDEX idx_city (city),
+        INDEX idx_category (category)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 4. Table: posts (Generic Business Posts with Target Locations & Multi-Images)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS posts (
+        post_id INT AUTO_INCREMENT PRIMARY KEY,
+        business_id INT NOT NULL,
+        user_id INT NOT NULL,
+        post_type VARCHAR(50) DEFAULT 'post',
+        title VARCHAR(255) NOT NULL,
+        subtitle VARCHAR(255),
+        description TEXT,
+        target_location VARCHAR(255) NOT NULL,
+        target_city VARCHAR(100),
+        target_district VARCHAR(100),
+        target_state VARCHAR(100) DEFAULT 'Tamil Nadu',
+        target_locations_json TEXT,
+        images TEXT,
+        brand_logo TEXT,
+        is_active TINYINT DEFAULT 1,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        INDEX idx_business_id (business_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_location_active (target_location, is_active),
+        INDEX idx_created (created_at)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 5. Table: saved_posts (Bookmarks for authenticated users)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS saved_posts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        post_id INT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY user_post_unique (user_id, post_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_post_id (post_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 6. Table: followed_businesses (Business profiles followed by users)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS followed_businesses (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        business_id INT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY user_biz_unique (user_id, business_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_business_id (business_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // Seed test accounts
+    await connection.query(`
+      INSERT IGNORE INTO users (id, email, full_name, mobile_number, country_code, full_address, locality, city, state, country, latitude, longitude)
+      VALUES 
+        (1, 'test1@gmail.com', 'Mani Kumar', '9876543210', '+91', '12 South Car Street, Palayamkottai, Tirunelveli, Tamil Nadu 627002', 'Palayamkottai', 'Tirunelveli', 'Tamil Nadu', 'India', 8.7139, 77.7567),
+        (2, 'test2@gmail.com', 'Devi Priya', '9876543211', '+91', '45 West Veli Street, Madurai Main, Madurai, Tamil Nadu 625001', 'Madurai Main', 'Madurai', 'Tamil Nadu', 'India', 9.9252, 78.1198);
+    `);
+
+    // Seed demo business profile if empty
+    const [bizCount] = await connection.query('SELECT COUNT(*) as cnt FROM business_profile');
+    if (bizCount[0].cnt === 0) {
+      await connection.query(`
+        INSERT INTO business_profile (business_id, user_id, business_name, category, business_phone, country_code, full_address, locality, city, state, country, latitude, longitude, profile_image, images, about)
+        VALUES 
+          (1, 1, 'Apex Dental Care', 'Healthcare & Clinic', '9443322110', '+91', '14 North High Ground Road, Palayamkottai, Tirunelveli, Tamil Nadu 627002', 'Palayamkottai', 'Tirunelveli', 'Tamil Nadu', 'India', 8.7139, 77.7567, 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=600&q=80', '[\"https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=600&q=80\"]', 'Comprehensive family dental clinic providing laser dentistry, smile designing, and orthodontic treatments.', '2026-09-21 11:20:34', '2026-09-25 12:00:00'),
+          (2, 1, 'Nova Tech Solutions', 'Electronics & Gadgets', '9876543210', '+91', '45 West Veli Street, Madurai Main, Madurai, Tamil Nadu 625001', 'Madurai Main', 'Madurai', 'Tamil Nadu', 'India', 9.9252, 78.1198, 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=600&q=80', '[\"https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=600&q=80\",\"https://images.unsplash.com/photo-1572536147248-ac59a8abfa4b?auto=format&fit=crop&w=600&q=80\"]', 'Authorized retailer for smart audio, wearables, IT hardware accessories, and repair services.', '2026-09-21 13:02:26', '2026-09-25 12:00:00');
+      `);
+
+      await connection.query(`
+        INSERT INTO posts (post_id, business_id, user_id, post_type, title, subtitle, description, target_location, target_city, target_district, target_state, target_locations_json, images, brand_logo, is_active)
+        VALUES
+          (1, 1, 1, 'post', 'Advanced Smile Designing & Laser Dentistry', 'Apex Dental Care • Palayamkottai', 'Experience painless laser dentistry and precision smile designing with our modern dental equipment. Book your consultation today.', 'Tirunelveli, Palayamkottai', 'Tirunelveli', 'Tirunelveli', 'Tamil Nadu', '[{\"placeId\":\"city_tirunelveli\",\"name\":\"Tirunelveli\",\"type\":\"city\",\"state\":\"Tamil Nadu\",\"country\":\"India\"},{\"placeId\":\"loc_palayamkottai\",\"name\":\"Palayamkottai\",\"type\":\"locality\",\"city\":\"Tirunelveli\",\"state\":\"Tamil Nadu\",\"country\":\"India\"}]', '[\"https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=600&q=80\",\"https://images.unsplash.com/photo-1588776814546-1ffcf47267a5?auto=format&fit=crop&w=600&q=80\"]', 'https://images.unsplash.com/photo-1629909613654-28e377c37b09?auto=format&fit=crop&w=150&q=80', 1),
+          (2, 2, 1, 'post', 'Wireless Audio & Smart Gadgets Arrival', 'Nova Tech Solutions • Madurai', 'Check out the new range of active noise cancelling wireless earphones and fast magnetic chargers at Nova Tech.', 'Madurai, Madurai Main', 'Madurai', 'Madurai', 'Tamil Nadu', '[{\"placeId\":\"city_madurai\",\"name\":\"Madurai\",\"type\":\"city\",\"state\":\"Tamil Nadu\",\"country\":\"India\"}]', '[\"https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=600&q=80\",\"https://images.unsplash.com/photo-1505740420928-5e560c06d30e?auto=format&fit=crop&w=600&q=80\"]', 'https://images.unsplash.com/photo-1590658268037-6bf12165a8df?auto=format&fit=crop&w=150&q=80', 1);
+      `);
+    }
+
+    connection.release();
+  } catch (error) {
+    console.error('[Database] MySQL Initialization Error:', error.message);
+  }
+}
+
+// ==========================================
+// 3. NODEMAILER EMAIL TRANSPORTER
+// ==========================================
+const cleanSmtpPass = (SMTP_PASS || '').replace(/\s+/g, '');
+
+const transporterConfig = SMTP_HOST === 'smtp.gmail.com'
+  ? {
+    service: 'gmail',
+    auth: {
+      user: SMTP_USER,
+      pass: cleanSmtpPass,
+    },
+  }
+  : {
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: cleanSmtpPass,
+    },
+    tls: {
+      rejectUnauthorized: false
+    }
+  };
+
+const transporter = nodemailer.createTransport(transporterConfig);
+
+function buildOtpHtmlTemplate(otp, expiryMinutes = 5) {
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ADVT Verification Code</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background-color: #f8fafc; margin: 0; padding: 0; }
+      .container { max-width: 500px; margin: 30px auto; background: #ffffff; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #e2e8f0; }
+      .header { background: linear-gradient(135deg, #4f46e5 0%, #6366f1 100%); padding: 30px 20px; text-align: center; color: #ffffff; }
+      .header h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: 0.5px; }
+      .content { padding: 30px 24px; text-align: center; color: #334155; }
+      .otp-box { display: inline-block; background: #eef2ff; border: 2px dashed #4f46e5; border-radius: 12px; padding: 14px 32px; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4f46e5; margin: 15px 0 20px 0; }
+      .expiry { font-size: 13px; color: #ef4444; font-weight: 600; margin-bottom: 16px; }
+      .security { font-size: 12px; color: #94a3b8; line-height: 1.5; border-top: 1px solid #f1f5f9; padding-top: 16px; margin-top: 20px; }
+      .footer { background: #f8fafc; padding: 14px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1> ADVT</h1>
+        <p style="margin: 4px 0 0 0; opacity: 0.9; font-size: 14px;">Email Verification Code</p>
+      </div>
+      <div class="content">
+        <p style="font-size: 15px; margin-bottom: 16px;">Please use the following 6-digit code to complete your verification:</p>
+        <div class="otp-box">${otp}</div>
+        <p class="expiry">⚠️ This code expires in ${expiryMinutes} minutes.</p>
+        <div class="security">If you did not request this code, please ignore this email. Never share your OTP with anyone.</div>
+      </div>
+      <div class="footer">&copy; ${new Date().getFullYear()}  ADVT. All rights reserved.</div>
+    </div>
+  </body>
+  </html>
+  `;
+}
+
+async function sendOtpEmail(email, otp) {
+  if (!SMTP_USER || !cleanSmtpPass) {
+    throw new Error('SMTP credentials are not configured in backend .env file.');
+  }
+
+  const senderAddress = FROM_EMAIL && FROM_EMAIL.includes('<') && FROM_EMAIL.includes('>')
+    ? FROM_EMAIL
+    : `"Simple ADVT" <${SMTP_USER}>`;
+
+  const mailOptions = {
+    from: senderAddress,
+    to: email,
+    subject: `${otp} is your  ADVT verification code`,
+    text: `Your  ADVT verification code is: ${otp}. It will expire in ${OTP_EXPIRY_MINUTES} minutes.`,
+    html: buildOtpHtmlTemplate(otp, OTP_EXPIRY_MINUTES),
+  };
+
+  const info = await transporter.sendMail(mailOptions);
+  console.log(`[Mailer] Verification OTP sent successfully to ${email} (MessageID: ${info.messageId})`);
+  return info;
+}
+
+// ==========================================
+// 4. HELPER FUNCTIONS & LOGIC
+// ==========================================
+const TEST_ACCOUNTS = {
+  'test1@gmail.com': '123456',
+  'test2@gmail.com': '123456'
+};
+
+function isTestAccount(email) {
+  return Object.prototype.hasOwnProperty.call(TEST_ACCOUNTS, (email || '').toLowerCase().trim());
+}
+
+function verifyTestCredentials(email, otp) {
+  const cleanEmail = (email || '').toLowerCase().trim();
+  const cleanOtp = (otp || '').toString().trim();
+  return TEST_ACCOUNTS[cleanEmail] === cleanOtp;
+}
+
+function generate6DigitOtp() {
+  return crypto.randomInt(100000, 1000000).toString();
+}
+
+function isValidEmailFormat(email) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return email && emailRegex.test(email.trim());
+}
+
+function capitalizeWords(str) {
+  if (!str) return '';
+  return str.trim().split(/\s+/).map(w => {
+    if (!w) return '';
+    return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+  }).join(' ');
+}
+
+function extractAddressComponents(fullAddress, existingLocality = '', existingCity = '', existingState = '', existingCountry = '') {
+  let locality = (existingLocality || '').trim();
+  let city = (existingCity || '').trim();
+  let state = (existingState || '').trim();
+  let country = (existingCountry || '').trim();
+
+  const rawAddress = (fullAddress || '').trim();
+  if (!rawAddress) {
+    return {
+      full_address: '',
+      locality: locality || 'Local Area',
+      city: city || 'City',
+      state: state || 'Tamil Nadu',
+      country: country || 'India'
+    };
+  }
+
+  const parts = rawAddress.split(',').map(p => p.trim()).filter(p => p.length > 0);
+
+  if (parts.length > 0) {
+    if (!country) {
+      const lastPart = parts[parts.length - 1];
+      const cleanedCountry = lastPart.replace(/[0-9-]/g, '').trim();
+      country = cleanedCountry.length > 1 ? cleanedCountry : 'India';
+    }
+
+    if (!state) {
+      if (parts.length >= 2) {
+        const stateCandidate = parts[parts.length - 2].replace(/[0-9-]/g, '').trim();
+        if (stateCandidate.length > 0) state = stateCandidate;
+      }
+      if (!state) state = 'Tamil Nadu';
+    }
+
+    if (!city) {
+      if (parts.length >= 3) {
+        city = parts[parts.length - 3].replace(/[0-9-]/g, '').trim();
+      } else if (parts.length === 2) {
+        city = parts[0].replace(/[0-9-]/g, '').trim();
+      } else if (parts.length === 1) {
+        city = parts[0].trim();
+      }
+      if (!city) city = 'Tirunelveli';
+    }
+
+    if (!locality) {
+      if (parts.length >= 4) {
+        locality = parts.slice(0, parts.length - 3).join(', ').trim();
+      } else if (parts.length >= 2) {
+        locality = parts[0].trim();
+      } else {
+        locality = city || 'Palayamkottai';
+      }
+    }
+  }
+
+  return {
+    full_address: rawAddress,
+    locality: locality || city || 'Local Area',
+    city: city || 'City',
+    state: state || 'Tamil Nadu',
+    country: country || 'India'
+  };
+}
+
+async function checkRateLimit(email) {
+  const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MIN * 60 * 1000);
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS attempt_count FROM email_otp WHERE email = ? AND created_at >= ?`,
+    [email, windowStart]
+  );
+  const attemptCount = rows[0]?.attempt_count || 0;
+  return {
+    isLimited: attemptCount >= RATE_LIMIT_MAX,
+    attemptCount
+  };
+}
+
+async function processAndSendOtp(email) {
+  const cleanEmail = email.trim().toLowerCase();
+
+  if (isTestAccount(cleanEmail)) {
+    console.log(`[Auth] Test account: ${cleanEmail}. Skipping email dispatch (Fixed OTP: 123456).`);
+    return { email: cleanEmail, expiresInSeconds: OTP_EXPIRY_MINUTES * 60 };
+  }
+
+  const rateStatus = await checkRateLimit(cleanEmail);
+  if (rateStatus.isLimited) {
+    const error = new Error(`Rate limit exceeded. Maximum ${RATE_LIMIT_MAX} requests per ${RATE_LIMIT_WINDOW_MIN} minutes.`);
+    error.statusCode = 429;
+    throw error;
+  }
+
+  await pool.query(`UPDATE email_otp SET is_used = 1 WHERE email = ? AND is_used = 0`, [cleanEmail]);
+  const otp = generate6DigitOtp();
+  const expiresAt = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
+  const [insertResult] = await pool.query(
+    `INSERT INTO email_otp (email, otp, expires_at, is_used) VALUES (?, ?, ?, 0)`,
+    [cleanEmail, otp, expiresAt]
+  );
+
+  try {
+    await sendOtpEmail(cleanEmail, otp);
+  } catch (mailErr) {
+    await pool.query(`DELETE FROM email_otp WHERE id = ?`, [insertResult.insertId]);
+    console.error(`[Auth] Failed to send OTP to ${cleanEmail}:`, mailErr.message);
+    const error = new Error(`Failed to send verification email: ${mailErr.message}`);
+    error.statusCode = 500;
+    throw error;
+  }
+
+  return { email: cleanEmail, expiresInSeconds: OTP_EXPIRY_MINUTES * 60 };
+}
+
+// ==========================================
+// 5. EXPRESS APP & API ROUTE HANDLERS
+// ==========================================
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+app.use((req, res, next) => {
+  console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+  next();
+});
+
+// Health Check
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    status: 'online',
+    service: 'Simple ADVT Server',
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * 1. POST /api/send-email-otp
+ */
+app.post(['/api/send-email-otp', '/api/send-otp'], async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !isValidEmailFormat(email)) {
+      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+    }
+
+    const data = await processAndSendOtp(email);
+    return res.status(200).json({
+      success: true,
+      message: `Verification code sent to ${data.email}.`,
+      expiresInSeconds: data.expiresInSeconds
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return res.status(status).json({ success: false, message: error.message || 'Failed to send OTP.' });
+  }
+});
+
+/**
+ * 2. POST /api/resend-email-otp
+ */
+app.post(['/api/resend-email-otp', '/api/resend-otp'], async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !isValidEmailFormat(email)) {
+      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+    }
+
+    const data = await processAndSendOtp(email);
+    return res.status(200).json({
+      success: true,
+      message: `A new verification code was sent to ${data.email}.`,
+      expiresInSeconds: data.expiresInSeconds
+    });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    return res.status(status).json({ success: false, message: error.message || 'Failed to resend OTP.' });
+  }
+});
+
+/**
+ * 3. POST /api/verify-email-otp
+ */
+app.post(['/api/verify-email-otp', '/api/verify-otp'], async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !isValidEmailFormat(email)) {
+      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+    }
+    if (!otp || otp.toString().trim().length !== 6) {
+      return res.status(400).json({ success: false, message: 'Wrong OTP' });
+    }
+
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanOtp = otp.toString().trim();
+
+    let isVerified = false;
+
+    if (isTestAccount(cleanEmail)) {
+      if (verifyTestCredentials(cleanEmail, cleanOtp)) {
+        isVerified = true;
+      } else {
+        return res.status(400).json({ success: false, message: 'Wrong OTP' });
+      }
+    } else {
+      const [rows] = await pool.query(
+        `SELECT * FROM email_otp WHERE email = ? AND is_used = 0 ORDER BY created_at DESC LIMIT 1`,
+        [cleanEmail]
+      );
+
+      if (!rows || rows.length === 0) {
+        return res.status(400).json({ success: false, message: 'Wrong OTP' });
+      }
+
+      const record = rows[0];
+      const now = new Date();
+      if (now > new Date(record.expires_at)) {
+        await pool.query(`UPDATE email_otp SET is_used = 1 WHERE id = ?`, [record.id]);
+        return res.status(400).json({ success: false, message: 'OTP expired. Please resend the OTP.' });
+      }
+
+      if (record.otp !== cleanOtp) {
+        return res.status(400).json({ success: false, message: 'Wrong OTP' });
+      }
+
+      await pool.query(`UPDATE email_otp SET is_used = 1 WHERE id = ?`, [record.id]);
+      isVerified = true;
+    }
+
+    if (!isVerified) {
+      return res.status(400).json({ success: false, message: 'Wrong OTP' });
+    }
+
+    // Check if user already exists in users table
+    const [userRows] = await pool.query(`SELECT * FROM users WHERE email = ? LIMIT 1`, [cleanEmail]);
+
+    const token = jwt.sign({ email: cleanEmail, isVerified: true }, JWT_SECRET, { expiresIn: '30d' });
+
+    if (userRows && userRows.length > 0) {
+      const u = userRows[0];
+      const addr = extractAddressComponents(u.full_address, u.locality, u.city, u.state, u.country);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Email verified successfully!',
+        token,
+        isExistingUser: true,
+        user: {
+          id: u.id,
+          userId: `U${u.id.toString().padStart(3, '0')}`,
+          email: u.email,
+          full_name: capitalizeWords(u.full_name),
+          name: capitalizeWords(u.full_name),
+          mobile_number: u.mobile_number || '',
+          phone: u.mobile_number || '',
+          country_code: u.country_code || '+91',
+          full_address: u.full_address,
+          address: u.full_address,
+          locality: addr.locality,
+          city: addr.city,
+          state: addr.state,
+          country: addr.country,
+          latitude: parseFloat(u.latitude) || 0.0,
+          longitude: parseFloat(u.longitude) || 0.0,
+          isEmailVerified: true
+        }
+      });
+    }
+
+    // New user -> Requires registration
+    return res.status(200).json({
+      success: true,
+      message: 'Email verified successfully!',
+      token,
+      isExistingUser: false,
+      user: {
+        email: cleanEmail,
+        isEmailVerified: true
+      }
+    });
+  } catch (error) {
+    console.error('[Auth] Verification error:', error.message);
+    return res.status(500).json({ success: false, message: 'Internal server error while verifying OTP.' });
+  }
+});
+
+/**
+ * 4. POST /api/register-user
+ * Registration with Name and Address (One Email = One User Account)
+ */
+app.post(['/api/register-user', '/api/register'], async (req, res) => {
+  try {
+    const {
+      email,
+      full_name,
+      name,
+      full_address,
+      address,
+      locality = '',
+      city = '',
+      state = '',
+      country = 'India',
+      latitude = 0.0,
+      longitude = 0.0,
+      mobile_number = '',
+      country_code = '+91'
+    } = req.body;
+
+    const targetEmail = (email || '').trim().toLowerCase();
+    const targetName = capitalizeWords((full_name || name || '').trim());
+    const targetAddress = (full_address || address || '').trim();
+
+    if (!targetEmail || !isValidEmailFormat(targetEmail)) {
+      return res.status(400).json({ success: false, message: 'A valid email address is required.' });
+    }
+    if (!targetName) {
+      return res.status(400).json({ success: false, message: 'Name is required.' });
+    }
+    if (!targetAddress) {
+      return res.status(400).json({ success: false, message: 'Address is required.' });
+    }
+
+    const addr = extractAddressComponents(targetAddress, locality, city, state, country);
+
+    // Enforce 1-Email = 1-User
+    const [existing] = await pool.query(`SELECT id FROM users WHERE email = ? LIMIT 1`, [targetEmail]);
+    if (existing && existing.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'An account with this email address already exists. Please login.'
+      });
+    }
+
+    const [result] = await pool.query(`
+      INSERT INTO users (email, full_name, mobile_number, country_code, full_address, locality, city, state, country, latitude, longitude)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      targetEmail,
+      targetName,
+      (mobile_number || '').trim(),
+      (country_code || '+91').trim(),
+      addr.full_address,
+      addr.locality,
+      addr.city,
+      addr.state,
+      addr.country,
+      parseFloat(latitude) || 0.0,
+      parseFloat(longitude) || 0.0
+    ]);
+
+    const newUserId = result.insertId;
+    const token = jwt.sign({ id: newUserId, email: targetEmail, isVerified: true }, JWT_SECRET, { expiresIn: '30d' });
+
+    return res.status(201).json({
+      success: true,
+      message: 'User registered successfully!',
+      token,
+      user: {
+        id: newUserId,
+        userId: `U${newUserId.toString().padStart(3, '0')}`,
+        email: targetEmail,
+        full_name: targetName,
+        name: targetName,
+        mobile_number: mobile_number || '',
+        phone: mobile_number || '',
+        country_code: country_code || '+91',
+        full_address: addr.full_address,
+        address: addr.full_address,
+        locality: addr.locality,
+        city: addr.city,
+        state: addr.state,
+        country: addr.country,
+        latitude: parseFloat(latitude) || 0.0,
+        longitude: parseFloat(longitude) || 0.0
+      }
+    });
+  } catch (error) {
+    console.error('[Users] Registration error:', error.message);
+    if (error.code === 'ER_DUP_ENTRY') {
+      return res.status(400).json({ success: false, message: 'An account with this email already exists.' });
+    }
+    return res.status(500).json({ success: false, message: error.message || 'Error registering user.' });
+  }
+});
+
+// Authentication Middleware
+async function authenticateUser(req, res, next) {
+  try {
+    let user = null;
+    const authHeader = req.headers['authorization'];
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.substring(7).trim();
+      try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        if (decoded.id) {
+          const [rows] = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [decoded.id]);
+          if (rows && rows.length > 0) user = rows[0];
+        } else if (decoded.email) {
+          const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [decoded.email.toLowerCase().trim()]);
+          if (rows && rows.length > 0) user = rows[0];
+        }
+      } catch (_) {}
+    }
+
+    if (!user && req.headers['x-user-id']) {
+      const rawId = req.headers['x-user-id'].toString().replace(/^U0*/i, '');
+      const numId = parseInt(rawId, 10);
+      if (!isNaN(numId)) {
+        const [rows] = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [numId]);
+        if (rows && rows.length > 0) user = rows[0];
+      }
+    }
+
+    if (!user && req.headers['x-user-email']) {
+      const cleanEmail = req.headers['x-user-email'].toString().toLowerCase().trim();
+      const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [cleanEmail]);
+      if (rows && rows.length > 0) user = rows[0];
+    }
+
+    if (!user && req.query && req.query.user_id) {
+      const rawId = req.query.user_id.toString().replace(/^U0*/i, '');
+      const numId = parseInt(rawId, 10);
+      if (!isNaN(numId)) {
+        const [rows] = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [numId]);
+        if (rows && rows.length > 0) user = rows[0];
+      }
+    }
+
+    if (!user && req.query && req.query.email) {
+      const cleanEmail = req.query.email.toString().toLowerCase().trim();
+      const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [cleanEmail]);
+      if (rows && rows.length > 0) user = rows[0];
+    }
+
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Authentication required. Please login.' });
+    }
+
+    req.user = user;
+    next();
+  } catch (err) {
+    return res.status(500).json({ success: false, message: 'Authentication check failed.' });
+  }
+}
+
+/**
+ * 5. GET /api/user-profile
+ */
+app.get('/api/user-profile', async (req, res) => {
+  try {
+    const email = req.query.email;
+    if (!email || !isValidEmailFormat(email)) {
+      return res.status(400).json({ success: false, message: 'Valid email is required.' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [email.trim().toLowerCase()]);
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    const u = rows[0];
+    const addr = extractAddressComponents(u.full_address, u.locality, u.city, u.state, u.country);
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: u.id,
+        userId: `U${u.id.toString().padStart(3, '0')}`,
+        email: u.email,
+        full_name: capitalizeWords(u.full_name),
+        name: capitalizeWords(u.full_name),
+        mobile_number: u.mobile_number || '',
+        phone: u.mobile_number || '',
+        country_code: u.country_code || '+91',
+        full_address: u.full_address,
+        address: u.full_address,
+        locality: addr.locality,
+        city: addr.city,
+        state: addr.state,
+        country: addr.country,
+        latitude: parseFloat(u.latitude) || 0.0,
+        longitude: parseFloat(u.longitude) || 0.0
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching profile.' });
+  }
+});
+
+/**
+ * 6. PUT /api/update-profile
+ */
+app.put('/api/update-profile', async (req, res) => {
+  try {
+    const { email, full_name, name, full_address, address, locality = '', city = '', state = '', country = '', latitude, longitude } = req.body;
+    const cleanEmail = (email || '').trim().toLowerCase();
+    const cleanName = capitalizeWords((full_name || name || '').trim());
+    const cleanAddr = (full_address || address || '').trim();
+
+    const addr = extractAddressComponents(cleanAddr, locality, city, state, country);
+
+    await pool.query(`
+      UPDATE users 
+      SET full_name = ?, full_address = ?, locality = ?, city = ?, state = ?, country = ?,
+          latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude)
+      WHERE email = ?
+    `, [cleanName, addr.full_address, addr.locality, addr.city, addr.state, addr.country, latitude, longitude, cleanEmail]);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully!',
+      user: {
+        email: cleanEmail,
+        full_name: cleanName,
+        name: cleanName,
+        full_address: addr.full_address,
+        address: addr.full_address,
+        locality: addr.locality,
+        city: addr.city,
+        state: addr.state,
+        country: addr.country
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error updating profile.' });
+  }
+});
+
+// ==========================================
+// 6. BUSINESS PROFILE APIS
+// ==========================================
+
+/**
+ * POST /api/business-profiles
+ */
+app.post('/api/business-profiles', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {
+      business_name,
+      category = 'General Store',
+      business_phone,
+      country_code = '+91',
+      full_address,
+      locality = '',
+      city = '',
+      state = '',
+      country = 'India',
+      latitude = 0.0,
+      longitude = 0.0,
+      profile_image = '',
+      images = [],
+      about = ''
+    } = req.body;
+
+    if (!business_name || !business_name.trim()) {
+      return res.status(400).json({ success: false, message: 'Business name is required.' });
+    }
+    if (!business_phone || !business_phone.trim()) {
+      return res.status(400).json({ success: false, message: 'Business phone number is required.' });
+    }
+    if (!full_address || !full_address.trim()) {
+      return res.status(400).json({ success: false, message: 'Business address is required.' });
+    }
+
+    const addr = extractAddressComponents(full_address, locality, city, state, country);
+    const imagesJson = Array.isArray(images) ? JSON.stringify(images) : (typeof images === 'string' ? images : '[]');
+    const primaryImage = profile_image || (Array.isArray(images) && images.length > 0 ? images[0] : '');
+
+    const [result] = await pool.query(`
+      INSERT INTO business_profile (user_id, business_name, category, business_phone, country_code, full_address, locality, city, state, country, latitude, longitude, profile_image, images, about)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      userId,
+      capitalizeWords(business_name.trim()),
+      (category || 'General Store').trim(),
+      business_phone.trim(),
+      country_code.trim(),
+      addr.full_address,
+      addr.locality,
+      addr.city,
+      addr.state,
+      addr.country,
+      parseFloat(latitude) || 0.0,
+      parseFloat(longitude) || 0.0,
+      primaryImage,
+      imagesJson,
+      (about || '').trim()
+    ]);
+
+    const newBusinessId = result.insertId;
+
+    return res.status(201).json({
+      success: true,
+      message: 'Business profile created successfully!',
+      profile: {
+        business_id: newBusinessId,
+        business_profile_id: `BP${newBusinessId.toString().padStart(3, '0')}`,
+        user_id: userId,
+        owner_user_id: `U${userId.toString().padStart(3, '0')}`,
+        business_name: capitalizeWords(business_name.trim()),
+        category: category.trim(),
+        business_phone: business_phone.trim(),
+        country_code: country_code.trim(),
+        full_address: addr.full_address,
+        locality: addr.locality,
+        city: addr.city,
+        state: addr.state,
+        country: addr.country,
+        latitude: parseFloat(latitude) || 0.0,
+        longitude: parseFloat(longitude) || 0.0,
+        profile_image: primaryImage,
+        images: Array.isArray(images) ? images : [],
+        about: (about || '').trim()
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error creating business profile.' });
+  }
+});
+
+/**
+ * GET /api/business-profiles/my & GET /api/business-profiles
+ */
+app.get(['/api/business-profiles/my', '/api/business-profiles'], authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const [rows] = await pool.query(
+      `SELECT * FROM business_profile WHERE user_id = ? ORDER BY created_at DESC, business_id DESC`,
+      [userId]
+    );
+
+    const profiles = rows.map(r => {
+      let parsedImages = [];
+      try {
+        parsedImages = r.images ? (typeof r.images === 'string' ? JSON.parse(r.images) : r.images) : [];
+      } catch (_) {
+        parsedImages = r.profile_image ? [r.profile_image] : [];
+      }
+      return {
+        business_id: r.business_id,
+        business_profile_id: `BP${r.business_id.toString().padStart(3, '0')}`,
+        user_id: r.user_id,
+        owner_user_id: `U${r.user_id.toString().padStart(3, '0')}`,
+        business_name: capitalizeWords(r.business_name),
+        category: r.category || 'General Store',
+        business_phone: r.business_phone,
+        country_code: r.country_code || '+91',
+        full_address: r.full_address,
+        locality: r.locality || '',
+        city: r.city || '',
+        state: r.state || '',
+        country: r.country || 'India',
+        latitude: parseFloat(r.latitude) || 0.0,
+        longitude: parseFloat(r.longitude) || 0.0,
+        profile_image: r.profile_image || (parsedImages.length > 0 ? parsedImages[0] : ''),
+        images: parsedImages,
+        about: r.about || '',
+        created_at: r.created_at
+      };
+    });
+
+    return res.status(200).json({ success: true, count: profiles.length, profiles });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching business profiles.' });
+  }
+});
+
+/**
+ * GET /api/business-profiles/:id
+ */
+app.get('/api/business-profiles/:id', async (req, res) => {
+  try {
+    const rawId = req.params.id.toString().replace(/^BP0*/i, '');
+    const businessId = parseInt(rawId, 10);
+    if (isNaN(businessId)) return res.status(400).json({ success: false, message: 'Invalid ID.' });
+
+    const [rows] = await pool.query('SELECT * FROM business_profile WHERE business_id = ? LIMIT 1', [businessId]);
+    if (!rows || rows.length === 0) return res.status(404).json({ success: false, message: 'Business not found.' });
+
+    const r = rows[0];
+    let parsedImages = [];
+    try {
+      parsedImages = r.images ? (typeof r.images === 'string' ? JSON.parse(r.images) : r.images) : [];
+    } catch (_) {
+      parsedImages = r.profile_image ? [r.profile_image] : [];
+    }
+
+    return res.status(200).json({
+      success: true,
+      profile: {
+        business_id: r.business_id,
+        business_profile_id: `BP${r.business_id.toString().padStart(3, '0')}`,
+        user_id: r.user_id,
+        owner_user_id: `U${r.user_id.toString().padStart(3, '0')}`,
+        business_name: capitalizeWords(r.business_name),
+        category: r.category || 'General Store',
+        business_phone: r.business_phone,
+        country_code: r.country_code || '+91',
+        full_address: r.full_address,
+        locality: r.locality || '',
+        city: r.city || '',
+        state: r.state || '',
+        country: r.country || 'India',
+        latitude: parseFloat(r.latitude) || 0.0,
+        longitude: parseFloat(r.longitude) || 0.0,
+        profile_image: r.profile_image || (parsedImages.length > 0 ? parsedImages[0] : ''),
+        images: parsedImages,
+        about: r.about || '',
+        created_at: r.created_at
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching business profile.' });
+  }
+});
+
+/**
+ * PUT /api/business-profiles/:id
+ */
+app.put('/api/business-profiles/:id', authenticateUser, async (req, res) => {
+  try {
+    const rawId = req.params.id.toString().replace(/^BP0*/i, '');
+    const businessId = parseInt(rawId, 10);
+    const userId = req.user.id;
+
+    const [existing] = await pool.query('SELECT * FROM business_profile WHERE business_id = ? LIMIT 1', [businessId]);
+    if (!existing || existing.length === 0) return res.status(404).json({ success: false, message: 'Business not found.' });
+    if (existing[0].user_id !== userId) return res.status(403).json({ success: false, message: 'Permission denied.' });
+
+    const { business_name, category, business_phone, country_code, profile_image, images, about } = req.body;
+    const current = existing[0];
+
+    const updatedName = business_name ? capitalizeWords(business_name.trim()) : current.business_name;
+    const updatedCat = category ? category.trim() : current.category;
+    const updatedPhone = business_phone ? business_phone.trim() : current.business_phone;
+    const updatedCc = country_code ? country_code.trim() : current.country_code;
+    const updatedAbout = about !== undefined ? about.trim() : current.about;
+    const updatedImages = images !== undefined ? (Array.isArray(images) ? JSON.stringify(images) : images) : current.images;
+    const updatedProfileImg = profile_image !== undefined ? profile_image : current.profile_image;
+
+    await pool.query(`
+      UPDATE business_profile
+      SET business_name = ?, category = ?, business_phone = ?, country_code = ?, profile_image = ?, images = ?, about = ?
+      WHERE business_id = ? AND user_id = ?
+    `, [updatedName, updatedCat, updatedPhone, updatedCc, updatedProfileImg, updatedImages, updatedAbout, businessId, userId]);
+
+    return res.status(200).json({ success: true, message: 'Business profile updated successfully!' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error updating business profile.' });
+  }
+});
+
+/**
+ * DELETE /api/business-profiles/:id
+ */
+app.delete('/api/business-profiles/:id', authenticateUser, async (req, res) => {
+  try {
+    const rawId = req.params.id.toString().replace(/^BP0*/i, '');
+    const businessId = parseInt(rawId, 10);
+    const userId = req.user.id;
+
+    const [existing] = await pool.query('SELECT * FROM business_profile WHERE business_id = ? LIMIT 1', [businessId]);
+    if (!existing || existing.length === 0) return res.status(404).json({ success: false, message: 'Business not found.' });
+    if (existing[0].user_id !== userId) return res.status(403).json({ success: false, message: 'Permission denied.' });
+
+    await pool.query('DELETE FROM business_profile WHERE business_id = ? AND user_id = ?', [businessId, userId]);
+    return res.status(200).json({ success: true, message: 'Business profile deleted successfully.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error deleting business profile.' });
+  }
+});
+
+// ==========================================
+// 7. BUSINESS POSTS & EXPLORE LOCATION FILTERING
+// ==========================================
+
+function calculateTimeAgo(dateInput) {
+  if (!dateInput) return 'Just now';
+  const diffMs = Date.now() - new Date(dateInput).getTime();
+  const diffMinutes = Math.floor(diffMs / (1000 * 60));
+  if (diffMinutes < 1) return 'Just now';
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return `${Math.floor(diffDays / 7)}w ago`;
+}
+
+function formatPostRow(r, isSaved = false) {
+  let parsedImages = [];
+  try {
+    parsedImages = r.images ? (typeof r.images === 'string' ? JSON.parse(r.images) : r.images) : [];
+  } catch (_) {
+    parsedImages = [];
+  }
+
+  let parsedTargetLocations = [];
+  try {
+    parsedTargetLocations = r.target_locations_json ? (typeof r.target_locations_json === 'string' ? JSON.parse(r.target_locations_json) : r.target_locations_json) : [];
+  } catch (_) {
+    parsedTargetLocations = [];
+  }
+
+  return {
+    post_id: r.post_id,
+    postId: `P${r.post_id.toString().padStart(3, '0')}`,
+    business_id: r.business_id,
+    businessProfileId: `BP${r.business_id.toString().padStart(3, '0')}`,
+    user_id: r.user_id,
+    ownerUserId: `U${r.user_id.toString().padStart(3, '0')}`,
+    bizName: capitalizeWords(r.business_name || ''),
+    business_name: capitalizeWords(r.business_name || ''),
+    type: 'post',
+    post_type: 'post',
+    title: r.title,
+    subtitle: r.subtitle || '',
+    description: r.description || '',
+    target_location: r.target_location,
+    targetLocation: r.target_location,
+    target_city: r.target_city || null,
+    target_district: r.target_district || null,
+    target_state: r.target_state || 'Tamil Nadu',
+    targetLocationItems: parsedTargetLocations,
+    target_locations: parsedTargetLocations,
+    images: parsedImages,
+    brand_logo: r.brand_logo || r.business_profile_image || null,
+    brandLogo: r.brand_logo || r.business_profile_image || null,
+    is_active: r.is_active === 1,
+    isSaved: isSaved || r.is_saved === 1,
+    timeAgo: calculateTimeAgo(r.created_at),
+    createdAt: r.created_at,
+    created_at: r.created_at
+  };
+}
+
+/**
+ * POST /api/posts
+ * Create a new generic Business Post
+ */
+app.post('/api/posts', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { business_id, businessProfileId, title, subtitle, description, target_location, targetLocation, target_locations, targetLocations, images } = req.body;
+
+    const rawBizId = business_id || businessProfileId;
+    if (!rawBizId) return res.status(400).json({ success: false, message: 'business_id is required.' });
+
+    const cleanBizId = parseInt(rawBizId.toString().replace(/^BP0*/i, ''), 10);
+    const [bizRows] = await pool.query('SELECT * FROM business_profile WHERE business_id = ? LIMIT 1', [cleanBizId]);
+    if (!bizRows || bizRows.length === 0) return res.status(404).json({ success: false, message: 'Business not found.' });
+    if (bizRows[0].user_id !== userId) return res.status(403).json({ success: false, message: 'You do not own this business.' });
+
+    const postTitle = (title || '').trim();
+    if (!postTitle) return res.status(400).json({ success: false, message: 'Post title is required.' });
+
+    const postSubtitle = (subtitle || '').trim();
+    const postDesc = (description || '').trim();
+    const targetLoc = (target_location || targetLocation || bizRows[0].city || 'Tamil Nadu').trim();
+
+    let imagesJson = '[]';
+    if (images) {
+      imagesJson = Array.isArray(images) ? JSON.stringify(images) : (typeof images === 'string' ? images : '[]');
+    }
+
+    let targetLocsJson = '[]';
+    const locList = target_locations || targetLocations;
+    if (locList) {
+      targetLocsJson = Array.isArray(locList) ? JSON.stringify(locList) : (typeof locList === 'string' ? locList : '[]');
+    }
+
+    const postBrandLogo = bizRows[0].profile_image || null;
+
+    const [result] = await pool.query(`
+      INSERT INTO posts (business_id, user_id, post_type, title, subtitle, description, target_location, target_city, target_district, target_state, target_locations_json, images, brand_logo, is_active)
+      VALUES (?, ?, 'post', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+    `, [
+      cleanBizId,
+      userId,
+      postTitle,
+      postSubtitle,
+      postDesc,
+      targetLoc,
+      bizRows[0].city || null,
+      bizRows[0].city || null,
+      bizRows[0].state || 'Tamil Nadu',
+      targetLocsJson,
+      imagesJson,
+      postBrandLogo
+    ]);
+
+    const newPostId = result.insertId;
+    const [insertedRows] = await pool.query(`
+      SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+      FROM posts p
+      LEFT JOIN business_profile b ON p.business_id = b.business_id
+      WHERE p.post_id = ? LIMIT 1
+    `, [newPostId]);
+
+    return res.status(201).json({
+      success: true,
+      message: 'Post created successfully!',
+      post: formatPostRow(insertedRows[0])
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error creating post.' });
+  }
+});
+
+/**
+ * GET /api/posts & GET /api/explore-posts
+ * Filter posts by user location & target locations hierarchy
+ */
+app.get(['/api/posts', '/api/explore-posts'], async (req, res) => {
+  try {
+    const { location, target_location, locality, city, state, country, business_id, user_id, search, q } = req.query;
+
+    let query = `
+      SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+      FROM posts p
+      LEFT JOIN business_profile b ON p.business_id = b.business_id
+      WHERE p.is_active = 1
+    `;
+    const params = [];
+
+    if (business_id) {
+      const cleanBizId = parseInt(business_id.toString().replace(/^BP0*/i, ''), 10);
+      if (!isNaN(cleanBizId)) {
+        query += ` AND p.business_id = ?`;
+        params.push(cleanBizId);
+      }
+    }
+
+    if (user_id) {
+      const cleanUserId = parseInt(user_id.toString().replace(/^U0*/i, ''), 10);
+      if (!isNaN(cleanUserId)) {
+        query += ` AND p.user_id = ?`;
+        params.push(cleanUserId);
+      }
+    }
+
+    const locFilter = location || target_location;
+    if (locFilter && locFilter.trim().length > 0 && locFilter.toLowerCase() !== 'all') {
+      const locTerms = locFilter.split(',').map(s => s.trim()).filter(Boolean);
+      if (locTerms.length > 0) {
+        const conditions = locTerms.map(() => `(p.target_location LIKE ? OR p.target_locations_json LIKE ? OR b.city LIKE ? OR b.state LIKE ?)`).join(' OR ');
+        query += ` AND (${conditions})`;
+        for (const term of locTerms) {
+          const pattern = `%${term}%`;
+          params.push(pattern, pattern, pattern, pattern);
+        }
+      }
+    }
+
+    // Specific structured location matching
+    if (locality || city || state || country) {
+      const structuredConditions = [];
+      if (locality && locality.trim()) {
+        const locPattern = `%${locality.trim()}%`;
+        structuredConditions.push(`p.target_location LIKE ? OR p.target_locations_json LIKE ?`);
+        params.push(locPattern, locPattern);
+      }
+      if (city && city.trim()) {
+        const cityPattern = `%${city.trim()}%`;
+        structuredConditions.push(`p.target_location LIKE ? OR p.target_city LIKE ? OR p.target_locations_json LIKE ? OR b.city LIKE ?`);
+        params.push(cityPattern, cityPattern, cityPattern, cityPattern);
+      }
+      if (state && state.trim()) {
+        const statePattern = `%${state.trim()}%`;
+        structuredConditions.push(`p.target_state LIKE ? OR p.target_locations_json LIKE ? OR b.state LIKE ?`);
+        params.push(statePattern, statePattern, statePattern);
+      }
+      if (structuredConditions.length > 0) {
+        query += ` AND (${structuredConditions.join(' OR ')})`;
+      }
+    }
+
+    const searchTerm = search || q;
+    if (searchTerm && searchTerm.trim().length > 0) {
+      query += ` AND (p.title LIKE ? OR p.subtitle LIKE ? OR p.description LIKE ? OR b.business_name LIKE ?)`;
+      const sPattern = `%${searchTerm.trim()}%`;
+      params.push(sPattern, sPattern, sPattern, sPattern);
+    }
+
+    query += ` ORDER BY p.created_at DESC`;
+
+    const [rows] = await pool.query(query, params);
+    const posts = rows.map(r => formatPostRow(r));
+
+    return res.status(200).json({ success: true, count: posts.length, posts });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching posts.' });
+  }
+});
+
+/**
+ * GET /api/posts/:id
+ */
+app.get('/api/posts/:id', async (req, res) => {
+  try {
+    const rawId = req.params.id.toString().replace(/^[P0]*/i, '');
+    const postId = parseInt(rawId, 10);
+    if (isNaN(postId)) return res.status(400).json({ success: false, message: 'Invalid post ID.' });
+
+    const [rows] = await pool.query(`
+      SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+      FROM posts p
+      LEFT JOIN business_profile b ON p.business_id = b.business_id
+      WHERE p.post_id = ? AND p.is_active = 1 LIMIT 1
+    `, [postId]);
+
+    if (!rows || rows.length === 0) return res.status(404).json({ success: false, message: 'Post not found.' });
+
+    return res.status(200).json({ success: true, post: formatPostRow(rows[0]) });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching post.' });
+  }
+});
+
+/**
+ * DELETE /api/posts/:id
+ */
+app.delete('/api/posts/:id', authenticateUser, async (req, res) => {
+  try {
+    const rawId = req.params.id.toString().replace(/^[P0]*/i, '');
+    const postId = parseInt(rawId, 10);
+    const userId = req.user.id;
+
+    const [existing] = await pool.query('SELECT * FROM posts WHERE post_id = ? LIMIT 1', [postId]);
+    if (!existing || existing.length === 0) return res.status(404).json({ success: false, message: 'Post not found.' });
+    if (existing[0].user_id !== userId) return res.status(403).json({ success: false, message: 'Permission denied.' });
+
+    await pool.query('DELETE FROM posts WHERE post_id = ? AND user_id = ?', [postId, userId]);
+    return res.status(200).json({ success: true, message: 'Post deleted successfully.' });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error deleting post.' });
+  }
+});
+
+// ==========================================
+// 8. SAVED POSTS / BOOKMARKS APIS
+// ==========================================
+
+/**
+ * POST /api/posts/:id/save (Toggle save/bookmark)
+ */
+app.post('/api/posts/:id/save', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const rawId = req.params.id.toString().replace(/^[P0]*/i, '');
+    const postId = parseInt(rawId, 10);
+    if (isNaN(postId)) return res.status(400).json({ success: false, message: 'Invalid post ID.' });
+
+    const [existing] = await pool.query('SELECT id FROM saved_posts WHERE user_id = ? AND post_id = ? LIMIT 1', [userId, postId]);
+
+    if (existing && existing.length > 0) {
+      await pool.query('DELETE FROM saved_posts WHERE user_id = ? AND post_id = ?', [userId, postId]);
+      return res.status(200).json({ success: true, isSaved: false, message: 'Post removed from saved items.' });
+    } else {
+      await pool.query('INSERT INTO saved_posts (user_id, post_id) VALUES (?, ?)', [userId, postId]);
+      return res.status(200).json({ success: true, isSaved: true, message: 'Post saved successfully!' });
+    }
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error toggling saved post.' });
+  }
+});
+
+/**
+ * GET /api/posts/saved (List saved posts for authenticated user)
+ */
+app.get('/api/posts/saved', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const [rows] = await pool.query(`
+      SELECT p.*, b.business_name, b.profile_image AS business_profile_image, 1 AS is_saved
+      FROM saved_posts sp
+      INNER JOIN posts p ON sp.post_id = p.post_id
+      LEFT JOIN business_profile b ON p.business_id = b.business_id
+      WHERE sp.user_id = ? AND p.is_active = 1
+      ORDER BY sp.created_at DESC
+    `, [userId]);
+
+    const posts = rows.map(r => formatPostRow(r, true));
+    return res.status(200).json({ success: true, count: posts.length, posts });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching saved posts.' });
+  }
+});
+
+// ==========================================
+// 9. FOLLOWED BUSINESSES APIS
+// ==========================================
+
+/**
+ * POST /api/business-profiles/:id/follow (Toggle follow)
+ */
+app.post('/api/business-profiles/:id/follow', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const rawId = req.params.id.toString().replace(/^BP0*/i, '');
+    const businessId = parseInt(rawId, 10);
+    if (isNaN(businessId)) return res.status(400).json({ success: false, message: 'Invalid business ID.' });
+
+    const [existing] = await pool.query('SELECT id FROM followed_businesses WHERE user_id = ? AND business_id = ? LIMIT 1', [userId, businessId]);
+
+    if (existing && existing.length > 0) {
+      await pool.query('DELETE FROM followed_businesses WHERE user_id = ? AND business_id = ?', [userId, businessId]);
+      return res.status(200).json({ success: true, isFollowed: false, message: 'Unfollowed business.' });
+    } else {
+      await pool.query('INSERT INTO followed_businesses (user_id, business_id) VALUES (?, ?)', [userId, businessId]);
+      return res.status(200).json({ success: true, isFollowed: true, message: 'Following business!' });
+    }
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error toggling follow status.' });
+  }
+});
+
+/**
+ * GET /api/business-profiles/followed (List followed businesses for authenticated user)
+ */
+app.get('/api/business-profiles/followed', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const [rows] = await pool.query(`
+      SELECT b.*
+      FROM followed_businesses fb
+      INNER JOIN business_profile b ON fb.business_id = b.business_id
+      WHERE fb.user_id = ?
+      ORDER BY fb.created_at DESC
+    `, [userId]);
+
+    const businesses = rows.map(r => {
+      let parsedImages = [];
+      try {
+        parsedImages = r.images ? (typeof r.images === 'string' ? JSON.parse(r.images) : r.images) : [];
+      } catch (_) {
+        parsedImages = r.profile_image ? [r.profile_image] : [];
+      }
+      return {
+        business_id: r.business_id,
+        business_profile_id: `BP${r.business_id.toString().padStart(3, '0')}`,
+        user_id: r.user_id,
+        owner_user_id: `U${r.user_id.toString().padStart(3, '0')}`,
+        business_name: capitalizeWords(r.business_name),
+        category: r.category || 'General Store',
+        business_phone: r.business_phone,
+        country_code: r.country_code || '+91',
+        full_address: r.full_address,
+        locality: r.locality || '',
+        city: r.city || '',
+        state: r.state || '',
+        country: r.country || 'India',
+        latitude: parseFloat(r.latitude) || 0.0,
+        longitude: parseFloat(r.longitude) || 0.0,
+        profile_image: r.profile_image || (parsedImages.length > 0 ? parsedImages[0] : ''),
+        images: parsedImages,
+        about: r.about || '',
+        isFollowed: true
+      };
+    });
+
+    return res.status(200).json({ success: true, count: businesses.length, businesses });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: 'Error fetching followed businesses.' });
+  }
+});
+
+// 404 Handler
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: `Endpoint ${req.method} ${req.originalUrl} not found.` });
+});
+
+// ==========================================
+// 10. BOOTSTRAP SERVER
+// ==========================================
+const privKeyPath = '/etc/letsencrypt/live/apps.plestarinc.com/privkey.pem';
+const certPath = '/etc/letsencrypt/live/apps.plestarinc.com/fullchain.pem';
+
+async function startServer() {
+  await initDatabase();
+
+  if (fs.existsSync(privKeyPath) && fs.existsSync(certPath)) {
+    const credentials = {
+      key: fs.readFileSync(privKeyPath, 'utf8'),
+      cert: fs.readFileSync(certPath, 'utf8')
+    };
+    const httpsPort = PORT === 5000 ? 3008 : PORT;
+    const httpsServer = https.createServer(credentials, app);
+    httpsServer.listen(httpsPort, '0.0.0.0', () => {
+      console.log(`====================================================`);
+      console.log(`🚀 Simple ADVT Live Server running on https://apps.plestarinc.com:${httpsPort}`);
+      console.log(`====================================================`);
+    });
+  } else {
+    const httpServer = http.createServer(app);
+    httpServer.listen(PORT, '0.0.0.0', () => {
+      console.log(`====================================================`);
+      console.log(`🚀 Simple ADVT Local Server running on http://localhost:${PORT}`);
+      console.log(`====================================================`);
+    });
+  }
+}
+
+startServer();
