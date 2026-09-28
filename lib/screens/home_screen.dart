@@ -183,41 +183,79 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Top Row: User Greeting, Location & Notification Bell
+                  // Top Row: Left Image Logo + User Greeting/Location + Notification Bell
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Left: Greeting and Simple Location Text
+                      // 1. Left Corner Image Logo
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.asset(
+                            'assets/images/explore_header.jpg',
+                            fit: BoxFit.contain,
+                            errorBuilder: (context, error, stackTrace) {
+                              return const Icon(
+                                Icons.campaign_rounded,
+                                size: 28,
+                                color: Color(0xFF4F46E5),
+                              );
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+
+                      // 2. Center Column: Hello, Username & Location below
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Text(
                               'Hello, $userDisplayName',
                               style: const TextStyle(
-                                fontSize: 20,
+                                fontSize: 18,
                                 fontWeight: FontWeight.bold,
                                 color: Color(0xFF111827),
                                 letterSpacing: -0.3,
                               ),
                             ),
                             const SizedBox(height: 3),
-                            Text(
-                              _formatUserLocationDisplay(user),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w500,
-                                color: Color(0xFF6B7280),
-                              ),
+                            Row(
+                              children: [
+                                const Icon(
+                                  Icons.location_on_rounded,
+                                  size: 15,
+                                  color: Color(0xFF4F46E5),
+                                ),
+                                const SizedBox(width: 3),
+                                Expanded(
+                                  child: Text(
+                                    _formatUserLocationDisplay(user),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w500,
+                                      color: Color(0xFF6B7280),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
                       ),
+                      const SizedBox(width: 8),
 
-                      // Right: Notification Bell Button with badge
+                      // 3. Right: Notification Bell Button with badge
                       Material(
                         color: Colors.transparent,
                         child: InkWell(
