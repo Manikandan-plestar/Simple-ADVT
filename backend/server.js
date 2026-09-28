@@ -1227,7 +1227,7 @@ async function getUserFromRequest(req) {
           const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [decoded.email.toLowerCase().trim()]);
           if (rows && rows.length > 0) user = rows[0];
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     if (!user && req.headers['x-user-id']) {

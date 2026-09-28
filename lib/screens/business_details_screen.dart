@@ -180,6 +180,128 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
     );
   }
 
+  void _showOwnerActionsModal(BuildContext context, BusinessProfile biz) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 4,
+                margin: const EdgeInsets.only(bottom: 20),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE5E7EB),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      biz.displayName,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF111827),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEEF2FF),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.edit_outlined, color: Color(0xFF4F46E5), size: 20),
+                ),
+                title: const Text(
+                  'Edit',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF1F2937)),
+                ),
+                subtitle: const Text(
+                  'Update business details, photos, and contact info',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  Navigator.pushNamed(context, '/edit-biz', arguments: biz.businessProfileId);
+                },
+              ),
+              const Divider(height: 16, color: Color(0xFFF3F4F6)),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFECFDF5),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.add_circle_outline_rounded, color: Color(0xFF10B981), size: 20),
+                ),
+                title: const Text(
+                  'New Post',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF1F2937)),
+                ),
+                subtitle: const Text(
+                  'Create and publish a new announcement or post',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFF9CA3AF)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openCreatePostModal(context, biz);
+                },
+              ),
+              const Divider(height: 16, color: Color(0xFFF3F4F6)),
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF2F2),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444), size: 20),
+                ),
+                title: const Text(
+                  'Delete',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFFEF4444)),
+                ),
+                subtitle: const Text(
+                  'Permanently remove this business profile and all posts',
+                  style: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
+                ),
+                trailing: const Icon(Icons.chevron_right_rounded, color: Color(0xFFEF4444)),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmDeleteBusiness(context, biz);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showImageViewer(BuildContext context, String imageUrl) {
     Navigator.push(
       context,
@@ -234,53 +356,23 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
           CustomScrollView(
             controller: _scrollController,
             slivers: [
-              // 1. Instagram-Style Header Sliver
+              // 1. Header Sliver with Clean Navigation & Overflow Menu
               SliverAppBar(
                 expandedHeight: 240,
                 pinned: true,
                 backgroundColor: Colors.white,
                 elevation: 0,
-                leading: Container(
-                  margin: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: 0.9),
-                    shape: BoxShape.circle,
-                    boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
-                  ),
-                  child: IconButton(
-                    icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF111827), size: 20),
-                    onPressed: () => Navigator.pop(context),
-                  ),
+                leading: IconButton(
+                  icon: const Icon(Icons.arrow_back_rounded, color: Color(0xFF111827), size: 24),
+                  onPressed: () => Navigator.pop(context),
                 ),
                 actions: [
-                  if (isOwner) ...[
-                    Container(
-                      margin: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
-                      ),
-                      child: IconButton(
-                        icon: const Icon(Icons.edit_outlined, color: Color(0xFF4F46E5), size: 20),
-                        tooltip: 'Edit Business',
-                        onPressed: () => Navigator.pushNamed(context, '/edit-biz', arguments: biz.businessProfileId),
-                      ),
+                  if (isOwner)
+                    IconButton(
+                      icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF111827), size: 24),
+                      tooltip: 'More options',
+                      onPressed: () => _showOwnerActionsModal(context, biz),
                     ),
-                    Container(
-                      margin: const EdgeInsets.only(right: 12, top: 8, bottom: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.9),
-                        shape: BoxShape.circle,
-                        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
-                      ),
-                      child: IconButton(
-                        icon: const Icon(Icons.delete_outline_rounded, color: Color(0xFFEF4444), size: 20),
-                        tooltip: 'Delete Business',
-                        onPressed: () => _confirmDeleteBusiness(context, biz),
-                      ),
-                    ),
-                  ],
                 ],
                 flexibleSpace: FlexibleSpaceBar(
                   background: GestureDetector(
@@ -455,7 +547,7 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Owner's "+ / New Post" Action Bar (Requirement 25)
+                      // Owner's "+ New Post" Action Bar
                       if (isOwner) ...[
                         SizedBox(
                           width: double.infinity,
@@ -469,7 +561,7 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                             ),
                             icon: const Icon(Icons.add_rounded, size: 20),
-                            label: const Text('+ New Post', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                            label: const Text('New Post', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                           ),
                         ),
                         const SizedBox(height: 24),
@@ -606,8 +698,10 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
                     ),
                     if (isOwner)
                       IconButton(
-                        icon: const Icon(Icons.add_circle_outline_rounded, color: Color(0xFF4F46E5), size: 24),
-                        onPressed: () => _openCreatePostModal(context, biz),
+                        icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF111827), size: 22),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        onPressed: () => _showOwnerActionsModal(context, biz),
                       ),
                   ],
                 ),

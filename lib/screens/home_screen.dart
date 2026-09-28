@@ -6,12 +6,11 @@ import '../services/business_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/common/bottom_navigation.dart';
 import '../widgets/common/empty_state.dart';
-import '../widgets/home/post_card.dart';
-import '../widgets/skeleton/skeleton_post_card.dart';
 import '../utils/text_utils.dart';
 import 'notifications_screen.dart';
 import 'saved_items_screen.dart';
 import 'settings_screen.dart';
+import '../widgets/home/tinder_card_deck.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialTabIndex;
@@ -115,7 +114,7 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             // Exact 3 bottom navigation tabs:
             // 0: Saved (Left)
-            // 1: Explore (Center - Main discovery screen)
+            // 1: Explore (Center - Tinder-Style Card Stack)
             // 2: Settings (Right - My Profile, Business Profile, Followed, Logout)
             IndexedStack(
               index: _currentBottomNavIndex,
@@ -169,265 +168,203 @@ class _HomeScreenState extends State<HomeScreen> {
         ? TextUtils.capitalizeWords(user.name.trim().split(' ').first)
         : 'User';
 
-    return RefreshIndicator(
-      onRefresh: _loadInitialData,
-      color: const Color(0xFF4F46E5),
-      child: CustomScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        slivers: [
-          // Explore App Bar & Header
-          SliverToBoxAdapter(
-            child: Container(
-              color: Colors.white,
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      children: [
+        // ==========================================
+        // 1. PINNED TOP HEADER: Logo, User, Location, Search Bar, Notification Bell
+        // ==========================================
+        Container(
+          color: Colors.white,
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Top Row: Left Image Logo + User Greeting/Location + Notification Bell
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  // Top Row: Left Image Logo + User Greeting/Location + Notification Bell
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      // 1. Left Corner Image Logo
-                      Container(
-                        width: 48,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.asset(
-                            'assets/images/explore_header.jpg',
-                            fit: BoxFit.contain,
-                            errorBuilder: (context, error, stackTrace) {
-                              return const Icon(
-                                Icons.campaign_rounded,
-                                size: 28,
-                                color: Color(0xFF4F46E5),
-                              );
-                            },
+                  // 1. Left Corner Image Logo
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.asset(
+                        'assets/images/explore_header.jpg',
+                        fit: BoxFit.contain,
+                        errorBuilder: (context, error, stackTrace) {
+                          return const Icon(
+                            Icons.campaign_rounded,
+                            size: 26,
+                            color: Color(0xFF4F46E5),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+
+                  // 2. Center Column: Hello, Username & Location below
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          'Hello, $userDisplayName',
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF111827),
+                            letterSpacing: -0.3,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-
-                      // 2. Center Column: Hello, Username & Location below
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
+                        const SizedBox(height: 2),
+                        Row(
                           children: [
-                            Text(
-                              'Hello, $userDisplayName',
-                              style: const TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF111827),
-                                letterSpacing: -0.3,
-                              ),
+                            const Icon(
+                              Icons.location_on_rounded,
+                              size: 14,
+                              color: Color(0xFF4F46E5),
                             ),
-                            const SizedBox(height: 3),
-                            Row(
-                              children: [
-                                const Icon(
-                                  Icons.location_on_rounded,
-                                  size: 15,
-                                  color: Color(0xFF4F46E5),
+                            const SizedBox(width: 3),
+                            Expanded(
+                              child: Text(
+                                _formatUserLocationDisplay(user),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  color: Color(0xFF6B7280),
                                 ),
-                                const SizedBox(width: 3),
-                                Expanded(
-                                  child: Text(
-                                    _formatUserLocationDisplay(user),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w500,
-                                      color: Color(0xFF6B7280),
-                                    ),
-                                  ),
-                                ),
-                              ],
+                              ),
                             ),
                           ],
                         ),
-                      ),
-                      const SizedBox(width: 8),
-
-                      // 3. Right: Notification Bell Button with badge
-                      Material(
-                        color: Colors.transparent,
-                        child: InkWell(
-                          borderRadius: BorderRadius.circular(12),
-                          onTap: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-                            );
-                          },
-                          child: Container(
-                            width: 42,
-                            height: 42,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF3F4F6),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Stack(
-                              alignment: Alignment.center,
-                              children: [
-                                const Icon(
-                                  Icons.notifications_none_rounded,
-                                  color: Color(0xFF1F2937),
-                                  size: 22,
-                                ),
-                                if (notifService.unreadCount > 0)
-                                  Positioned(
-                                    top: 9,
-                                    right: 9,
-                                    child: Container(
-                                      width: 8,
-                                      height: 8,
-                                      decoration: const BoxDecoration(
-                                        color: Color(0xFFEF4444),
-                                        shape: BoxShape.circle,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-
-                  // Integrated Search Bar in Explore
-                  Container(
-                    height: 46,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF3F4F6),
-                      borderRadius: BorderRadius.circular(14),
+                      ],
                     ),
-                    child: TextField(
-                      controller: _searchController,
-                      onChanged: (val) {
-                        setState(() {
-                          _searchQuery = val.trim();
-                        });
+                  ),
+                  const SizedBox(width: 8),
+
+                  // 3. Right: Notification Bell Button with badge
+                  Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(12),
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                        );
                       },
-                      decoration: InputDecoration(
-                        hintText: 'Search businesses or posts in your area...',
-                        hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF9CA3AF)),
-                        prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF9CA3AF), size: 20),
-                        suffixIcon: _searchQuery.isNotEmpty
-                            ? IconButton(
-                                icon: const Icon(Icons.clear_rounded, size: 18, color: Color(0xFF9CA3AF)),
-                                onPressed: () {
-                                  _searchController.clear();
-                                  setState(() {
-                                    _searchQuery = '';
-                                  });
-                                },
-                              )
-                            : null,
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 12),
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF3F4F6),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            const Icon(
+                              Icons.notifications_none_rounded,
+                              color: Color(0xFF1F2937),
+                              size: 21,
+                            ),
+                            if (notifService.unreadCount > 0)
+                              Positioned(
+                                top: 8,
+                                right: 8,
+                                child: Container(
+                                  width: 8,
+                                  height: 8,
+                                  decoration: const BoxDecoration(
+                                    color: Color(0xFFEF4444),
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
                 ],
               ),
-            ),
-          ),
+              const SizedBox(height: 12),
 
-          // Location Targeting Feed Header
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    children: [
-                      const Text(
-                        'Relevant For You',
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF111827),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFECFDF5),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFFA7F3D0)),
-                        ),
-                        child: const Text(
-                          'LOCATION MATCHED',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF047857),
-                            letterSpacing: 0.4,
+              // 2. Pinned Search Bar
+              Container(
+                height: 44,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF3F4F6),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: TextField(
+                  controller: _searchController,
+                  onChanged: (val) {
+                    setState(() {
+                      _searchQuery = val.trim();
+                    });
+                  },
+                  decoration: InputDecoration(
+                    hintText: 'Search businesses or posts in your area...',
+                    hintStyle: const TextStyle(fontSize: 13, color: Color(0xFF9CA3AF)),
+                    prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF9CA3AF), size: 20),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear_rounded, size: 18, color: Color(0xFF9CA3AF)),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {
+                                _searchQuery = '';
+                              });
+                            },
+                          )
+                        : null,
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 11),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // ==========================================
+        // 2. CARD STACK AREA: Tinder-Style Horizontal Swipe Deck
+        // ==========================================
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 74), // Spacing above scooped bottom nav
+            child: isLoading && allPosts.isEmpty
+                ? const Center(
+                    child: CircularProgressIndicator(color: Color(0xFF4F46E5)),
+                  )
+                : filteredPosts.isEmpty
+                    ? Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                          child: EmptyStateWidget(
+                            icon: Icons.location_off_rounded,
+                            title: _searchQuery.isNotEmpty ? 'No matches found' : 'No posts in your area yet',
+                            subtitle: _searchQuery.isNotEmpty
+                                ? 'Try searching with a different business name or keyword.'
+                                : 'Posts targeting ${_formatUserLocationDisplay(user)} will appear here once published by businesses.',
                           ),
                         ),
-                      ),
-                    ],
-                  ),
-                  if (!isLoading)
-                    Text(
-                      '${filteredPosts.length} post${filteredPosts.length == 1 ? '' : 's'}',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF6B7280)),
-                    ),
-                ],
-              ),
-            ),
-          ),
-
-          // Feed Content: Skeleton loading or Post list or Empty state
-          if (isLoading && allPosts.isEmpty)
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => const Padding(
-                    padding: EdgeInsets.only(bottom: 12),
-                    child: SkeletonPostCard(),
-                  ),
-                  childCount: 4,
-                ),
-              ),
-            )
-          else if (filteredPosts.isEmpty)
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-                child: EmptyStateWidget(
-                  icon: Icons.location_off_rounded,
-                  title: _searchQuery.isNotEmpty ? 'No matches found' : 'No posts in your area yet',
-                  subtitle: _searchQuery.isNotEmpty
-                      ? 'Try searching with a different business name or keyword.'
-                      : 'Posts targeting ${_formatUserLocationDisplay(user)} will appear here once published by businesses.',
-                ),
-              ),
-            )
-          else
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-              sliver: SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) {
-                    final post = filteredPosts[index];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: PostCard(
-                        post: post,
-                        onBookmarkTap: () {
+                      )
+                    : TinderCardDeck(
+                        posts: filteredPosts,
+                        onReload: _loadInitialData,
+                        onToggleSave: (post) {
                           postService.toggleSavePost(
                             post.postId,
                             authToken: user.authToken,
@@ -435,15 +372,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             userEmail: user.email,
                           );
                         },
+                        onBusinessTap: (post) {
+                          if (post.businessProfileId.isNotEmpty) {
+                            Navigator.pushNamed(context, '/business-details', arguments: post.businessProfileId);
+                          }
+                        },
                       ),
-                    );
-                  },
-                  childCount: filteredPosts.length,
-                ),
-              ),
-            ),
-        ],
-      ),
+          ),
+        ),
+      ],
     );
   }
 }

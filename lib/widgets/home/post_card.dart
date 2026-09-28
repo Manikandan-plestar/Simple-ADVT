@@ -10,7 +10,7 @@ class PostCard extends StatelessWidget {
   final VoidCallback? onBookmarkTap;
   final VoidCallback? onBusinessTap;
 
-  const PostCard({
+  PostCard({
     super.key,
     PostItem? post,
     PostItem? item,
@@ -18,7 +18,7 @@ class PostCard extends StatelessWidget {
     this.onToggleSave,
     this.onBookmarkTap,
     this.onBusinessTap,
-  }) : item = post ?? item!;
+  }) : item = (post ?? item)!;
 
   @override
   Widget build(BuildContext context) {
