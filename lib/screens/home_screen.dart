@@ -3,11 +3,13 @@ import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/post_service.dart';
 import '../services/business_service.dart';
+import '../services/notification_service.dart';
 import '../widgets/common/bottom_navigation.dart';
 import '../widgets/common/empty_state.dart';
 import '../widgets/home/post_card.dart';
 import '../widgets/skeleton/skeleton_post_card.dart';
 import '../utils/text_utils.dart';
+import 'notifications_screen.dart';
 import 'saved_items_screen.dart';
 import 'settings_screen.dart';
 
@@ -86,17 +88,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   String _formatUserLocationDisplay(UserProfile user) {
-    if (user.locality.isNotEmpty && user.city.isNotEmpty && user.locality != user.city) {
+    if (user.locality.isNotEmpty && user.city.isNotEmpty && user.locality.toLowerCase() != user.city.toLowerCase()) {
       return '${TextUtils.capitalizeWords(user.locality)}, ${TextUtils.capitalizeWords(user.city)}';
     }
-    if (user.city.isNotEmpty) return TextUtils.capitalizeWords(user.city);
     if (user.locality.isNotEmpty) return TextUtils.capitalizeWords(user.locality);
+    if (user.city.isNotEmpty) return TextUtils.capitalizeWords(user.city);
     if (user.state.isNotEmpty) return TextUtils.capitalizeWords(user.state);
 
     if (user.address.isNotEmpty) {
       final parts = user.address.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList();
       if (parts.length >= 2) {
-        return '${TextUtils.capitalizeWords(parts[parts.length - 2])}, ${TextUtils.capitalizeWords(parts[parts.length - 1].split('-')[0].trim())}';
+        return '${TextUtils.capitalizeWords(parts[0])}, ${TextUtils.capitalizeWords(parts[1].split('-')[0].trim())}';
       } else if (parts.isNotEmpty) {
         return TextUtils.capitalizeWords(parts.first);
       }
@@ -147,6 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _buildExploreTab() {
     final authService = Provider.of<AuthService>(context);
     final postService = Provider.of<PostService>(context);
+    final notifService = Provider.of<NotificationService>(context);
     final user = authService.currentUser;
     final allPosts = postService.allPosts;
     final isLoading = postService.isLoading;
@@ -162,7 +165,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 (p.targetLocation?.toLowerCase().contains(q) ?? false);
           }).toList();
 
-    final userFirstName = user.name.trim().isNotEmpty
+    final userDisplayName = user.name.trim().isNotEmpty
         ? TextUtils.capitalizeWords(user.name.trim().split(' ').first)
         : 'User';
 
@@ -180,81 +183,82 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Top Row: User Greeting & Location Badge
+                  // Top Row: User Greeting, Location & Notification Bell
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      Row(
-                        children: [
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF4F46E5),
-                              borderRadius: BorderRadius.circular(14),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: const Color(0xFF4F46E5).withValues(alpha: 0.25),
-                                  blurRadius: 8,
-                                  offset: const Offset(0, 3),
-                                ),
-                              ],
-                            ),
-                            child: const Icon(Icons.explore_rounded, color: Colors.white, size: 22),
-                          ),
-                          const SizedBox(width: 12),
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Explore Simple ADVT',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF6B7280),
-                                ),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                'Hello, $userFirstName',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF111827),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-
-                      // Location pill
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFEEF2FF),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(color: const Color(0xFFE0E7FF)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
+                      // Left: Greeting and Simple Location Text
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Icon(Icons.location_on_rounded, size: 14, color: Color(0xFF4F46E5)),
-                            const SizedBox(width: 4),
-                            ConstrainedBox(
-                              constraints: const BoxConstraints(maxWidth: 120),
-                              child: Text(
-                                _formatUserLocationDisplay(user),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF4F46E5),
-                                ),
+                            Text(
+                              'Hello, $userDisplayName',
+                              style: const TextStyle(
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF111827),
+                                letterSpacing: -0.3,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              _formatUserLocationDisplay(user),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: Color(0xFF6B7280),
                               ),
                             ),
                           ],
+                        ),
+                      ),
+
+                      // Right: Notification Bell Button with badge
+                      Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                            );
+                          },
+                          child: Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFF3F4F6),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Stack(
+                              alignment: Alignment.center,
+                              children: [
+                                const Icon(
+                                  Icons.notifications_none_rounded,
+                                  color: Color(0xFF1F2937),
+                                  size: 22,
+                                ),
+                                if (notifService.unreadCount > 0)
+                                  Positioned(
+                                    top: 9,
+                                    right: 9,
+                                    child: Container(
+                                      width: 8,
+                                      height: 8,
+                                      decoration: const BoxDecoration(
+                                        color: Color(0xFFEF4444),
+                                        shape: BoxShape.circle,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
                     ],

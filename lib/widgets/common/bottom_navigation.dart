@@ -12,113 +12,229 @@ class CustomBottomNavigation extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const activeColor = Color(0xFF4F46E5); // Indigo
-    const inactiveColor = Color(0xFF9CA3AF); // Gray 400
+    const primaryColor = Color(0xFF6366F1); // Indigo / Purple
+    const inactiveColor = Color(0xFF9CA3AF); // Slate Gray
 
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 16,
-            offset: const Offset(0, -4),
-          ),
-        ],
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+    final items = [
+      _NavItemData(
+        label: 'Saved',
+        activeIcon: Icons.bookmark_rounded,
+        inactiveIcon: Icons.bookmark_border_rounded,
       ),
-      child: SafeArea(
-        top: false,
-        child: Container(
-          height: 64,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceAround,
-            children: [
-              // 1. Saved (Left)
-              Expanded(
-                child: _buildNavItem(
-                  icon: currentIndex == 0 ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-                  label: 'Saved',
-                  isActive: currentIndex == 0,
-                  activeColor: activeColor,
-                  inactiveColor: inactiveColor,
-                  onTap: () => onTap(0),
-                ),
-              ),
-
-              // 2. Explore (Center)
-              Expanded(
-                child: _buildNavItem(
-                  icon: currentIndex == 1 ? Icons.explore_rounded : Icons.explore_outlined,
-                  label: 'Explore',
-                  isActive: currentIndex == 1,
-                  activeColor: activeColor,
-                  inactiveColor: inactiveColor,
-                  onTap: () => onTap(1),
-                ),
-              ),
-
-              // 3. Settings (Right)
-              Expanded(
-                child: _buildNavItem(
-                  icon: currentIndex == 2 ? Icons.settings_rounded : Icons.settings_outlined,
-                  label: 'Settings',
-                  isActive: currentIndex == 2,
-                  activeColor: activeColor,
-                  inactiveColor: inactiveColor,
-                  onTap: () => onTap(2),
-                ),
-              ),
-            ],
-          ),
-        ),
+      _NavItemData(
+        label: 'Explore',
+        activeIcon: Icons.explore_rounded,
+        inactiveIcon: Icons.explore_outlined,
       ),
+      _NavItemData(
+        label: 'Settings',
+        activeIcon: Icons.settings_rounded,
+        inactiveIcon: Icons.settings_outlined,
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final totalWidth = constraints.maxWidth;
+        final tabWidth = totalWidth / items.length;
+
+        return TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: currentIndex.toDouble(), end: currentIndex.toDouble()),
+          duration: const Duration(milliseconds: 320),
+          curve: Curves.easeInOutCubic,
+          builder: (context, animIndex, child) {
+            return Stack(
+              clipBehavior: Clip.none,
+              alignment: Alignment.bottomCenter,
+              children: [
+                // 1. Curved Scooped Background Bar
+                CustomPaint(
+                  size: Size(totalWidth, 68),
+                  painter: _CurvedNotchPainter(
+                    activeIndex: animIndex,
+                    itemCount: items.length,
+                    barColor: Colors.white,
+                    shadowColor: Colors.black.withValues(alpha: 0.08),
+                  ),
+                ),
+
+                // 2. Tab Items Row (Inactive items with icons and labels)
+                SizedBox(
+                  height: 68,
+                  child: Row(
+                    children: List.generate(items.length, (index) {
+                      final item = items[index];
+                      final isCurrent = index == currentIndex;
+
+                      return Expanded(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTap: () => onTap(index),
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 14, bottom: 8),
+                            child: AnimatedOpacity(
+                              duration: const Duration(milliseconds: 200),
+                              opacity: isCurrent ? 0.0 : 1.0,
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(
+                                    item.inactiveIcon,
+                                    size: 22,
+                                    color: inactiveColor,
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    item.label,
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w500,
+                                      color: inactiveColor,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+
+                // 3. Floating Raised Circular Active Button
+                Positioned(
+                  left: (animIndex + 0.5) * tabWidth - 26,
+                  bottom: 24,
+                  child: GestureDetector(
+                    onTap: () => onTap(currentIndex),
+                    child: Container(
+                      width: 52,
+                      height: 52,
+                      decoration: BoxDecoration(
+                        color: primaryColor,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: primaryColor.withValues(alpha: 0.38),
+                            blurRadius: 12,
+                            offset: const Offset(0, 6),
+                          ),
+                        ],
+                      ),
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 250),
+                        transitionBuilder: (child, animation) => ScaleTransition(
+                          scale: animation,
+                          child: child,
+                        ),
+                        child: Icon(
+                          items[currentIndex].activeIcon,
+                          key: ValueKey<int>(currentIndex),
+                          size: 26,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
+}
 
-  Widget _buildNavItem({
-    required IconData icon,
-    required String label,
-    required bool isActive,
-    required Color activeColor,
-    required Color inactiveColor,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              decoration: BoxDecoration(
-                color: isActive ? const Color(0xFFEEF2FF) : Colors.transparent,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(
-                icon,
-                size: 22,
-                color: isActive ? activeColor : inactiveColor,
-              ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: isActive ? FontWeight.w700 : FontWeight.w500,
-                color: isActive ? activeColor : inactiveColor,
-              ),
-            ),
-          ],
-        ),
-      ),
+class _NavItemData {
+  final String label;
+  final IconData activeIcon;
+  final IconData inactiveIcon;
+
+  const _NavItemData({
+    required this.label,
+    required this.activeIcon,
+    required this.inactiveIcon,
+  });
+}
+
+class _CurvedNotchPainter extends CustomPainter {
+  final double activeIndex;
+  final int itemCount;
+  final Color barColor;
+  final Color shadowColor;
+
+  _CurvedNotchPainter({
+    required this.activeIndex,
+    required this.itemCount,
+    required this.barColor,
+    required this.shadowColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final w = size.width;
+    final h = size.height;
+    final tabWidth = w / itemCount;
+    final centerX = (activeIndex + 0.5) * tabWidth;
+
+    const cornerRadius = 22.0;
+    const notchRadius = 34.0;
+    const notchDepth = 28.0;
+
+    final path = Path();
+    path.moveTo(0, cornerRadius);
+    path.quadraticBezierTo(0, 0, cornerRadius, 0);
+
+    // Line to left side of notch
+    final notchLeft = (centerX - notchRadius - 14).clamp(cornerRadius, w - cornerRadius);
+    path.lineTo(notchLeft, 0);
+
+    // Smooth organic scoop curve
+    path.cubicTo(
+      centerX - notchRadius,
+      0,
+      centerX - notchRadius * 0.55,
+      notchDepth,
+      centerX,
+      notchDepth,
     );
+    path.cubicTo(
+      centerX + notchRadius * 0.55,
+      notchDepth,
+      centerX + notchRadius,
+      0,
+      (centerX + notchRadius + 14).clamp(cornerRadius, w - cornerRadius),
+      0,
+    );
+
+    // Line to right corner
+    path.lineTo(w - cornerRadius, 0);
+    path.quadraticBezierTo(w, 0, w, cornerRadius);
+    path.lineTo(w, h);
+    path.lineTo(0, h);
+    path.close();
+
+    // Draw elevation shadow
+    final shadowPaint = Paint()
+      ..color = shadowColor
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
+    canvas.drawPath(path.shift(const Offset(0, -2)), shadowPaint);
+
+    // Draw white bar background
+    final paint = Paint()
+      ..color = barColor
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CurvedNotchPainter oldDelegate) {
+    return oldDelegate.activeIndex != activeIndex ||
+        oldDelegate.itemCount != itemCount ||
+        oldDelegate.barColor != barColor ||
+        oldDelegate.shadowColor != shadowColor;
   }
 }
