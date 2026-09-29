@@ -22,6 +22,8 @@ class PostItem {
   final String? targetLocation;
   final List<TargetLocationModel>? targetLocationItems;
   bool isSaved;
+  int moreInfoClickCount;
+  int savedCount;
 
   PostItem({
     required this.postId,
@@ -41,6 +43,8 @@ class PostItem {
     this.targetLocation,
     this.targetLocationItems,
     this.isSaved = false,
+    this.moreInfoClickCount = 0,
+    this.savedCount = 0,
   })  : createdAt = createdAt ?? DateTime.now(),
         images = (images != null && images.isNotEmpty)
             ? images
@@ -119,6 +123,9 @@ class PostItem {
       } catch (_) {}
     }
 
+    final parsedClicks = json['moreInfoClickCount'] ?? json['more_info_click_count'] ?? json['more_info_clicks'] ?? 0;
+    final parsedSaves = json['savedCount'] ?? json['saved_count'] ?? 0;
+
     return PostItem(
       postId: formattedPostId,
       numericPostId: numPostId,
@@ -136,6 +143,8 @@ class PostItem {
       targetLocation: json['targetLocation'] ?? json['target_location'],
       targetLocationItems: targetLocItems,
       isSaved: (json['isSaved'] == true || json['is_saved'] == 1),
+      moreInfoClickCount: parsedClicks is int ? parsedClicks : int.tryParse(parsedClicks.toString()) ?? 0,
+      savedCount: parsedSaves is int ? parsedSaves : int.tryParse(parsedSaves.toString()) ?? 0,
     );
   }
 
@@ -157,6 +166,8 @@ class PostItem {
       'targetLocation': targetLocation,
       'targetLocationItems': targetLocationItems?.map((e) => e.toMap()).toList(),
       'isSaved': isSaved,
+      'moreInfoClickCount': moreInfoClickCount,
+      'savedCount': savedCount,
     };
   }
 }
@@ -303,7 +314,7 @@ class PostService extends ChangeNotifier {
     return _savedPosts;
   }
 
-  /// Toggle Save / Bookmark a post (Persistent)
+  /// Toggle Save / Bookmark a post (Persistent with atomic savedCount sync)
   Future<void> toggleSavePost(String postId, {String? authToken, String? userId, String? userEmail}) async {
     // 1. Optimistically update local state
     final feedIndex = _feedPosts.indexWhere((p) => p.postId == postId);
@@ -313,12 +324,18 @@ class PostService extends ChangeNotifier {
     if (feedIndex != -1) {
       _feedPosts[feedIndex].isSaved = !_feedPosts[feedIndex].isSaved;
       newSavedState = _feedPosts[feedIndex].isSaved;
+      if (newSavedState) {
+        _feedPosts[feedIndex].savedCount += 1;
+      } else {
+        _feedPosts[feedIndex].savedCount = (_feedPosts[feedIndex].savedCount - 1).clamp(0, 999999);
+      }
       targetPost = _feedPosts[feedIndex];
     } else {
       final savedIndex = _savedPosts.indexWhere((p) => p.postId == postId);
       if (savedIndex != -1) {
         targetPost = _savedPosts[savedIndex];
         newSavedState = false;
+        targetPost.savedCount = (targetPost.savedCount - 1).clamp(0, 999999);
       }
     }
 
@@ -342,16 +359,78 @@ class PostService extends ChangeNotifier {
       };
 
       try {
-        await http.post(
+        final response = await http.post(
           Uri.parse('$_baseUrl/api/posts/$cleanPostId/save'),
           headers: headers,
         ).timeout(const Duration(seconds: 8));
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          if (data['savedCount'] != null) {
+            final serverSavedCount = int.tryParse(data['savedCount'].toString()) ?? 0;
+            if (feedIndex != -1 && feedIndex < _feedPosts.length) {
+              _feedPosts[feedIndex].savedCount = serverSavedCount;
+            }
+            if (targetPost != null) {
+              targetPost.savedCount = serverSavedCount;
+            }
+            notifyListeners();
+          }
+        }
       } catch (e) {
         if (kDebugMode) {
           print('[PostService] Error syncing saved post: $e');
         }
       }
     }
+  }
+
+  /// Track "More Info" button click engagement (Non-blocking / fire-and-forget)
+  Future<void> trackMoreInfoClick(String postId, {String? authToken, String? userId, String? userEmail}) async {
+    // 1. Optimistically increment in-memory click count
+    final feedIndex = _feedPosts.indexWhere((p) => p.postId == postId);
+    if (feedIndex != -1) {
+      _feedPosts[feedIndex].moreInfoClickCount += 1;
+    }
+    final savedIndex = _savedPosts.indexWhere((p) => p.postId == postId);
+    if (savedIndex != -1) {
+      _savedPosts[savedIndex].moreInfoClickCount += 1;
+    }
+
+    // 2. Non-blocking network sync
+    final cleanPostId = postId.replaceAll(RegExp(r'[^0-9]'), '');
+    if (cleanPostId.isEmpty) return;
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+      if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
+      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
+    };
+
+    try {
+      final uri = Uri.parse('$_baseUrl/api/posts/$cleanPostId/more-info-click');
+      http.post(uri, headers: headers).then((response) {
+        if (response.statusCode == 200) {
+          try {
+            final data = jsonDecode(response.body);
+            if (data['moreInfoClickCount'] != null) {
+              final newCount = int.tryParse(data['moreInfoClickCount'].toString()) ?? 0;
+              if (feedIndex != -1 && feedIndex < _feedPosts.length) {
+                _feedPosts[feedIndex].moreInfoClickCount = newCount;
+              }
+              if (savedIndex != -1 && savedIndex < _savedPosts.length) {
+                _savedPosts[savedIndex].moreInfoClickCount = newCount;
+              }
+            }
+          } catch (_) {}
+        }
+      }).catchError((e) {
+        if (kDebugMode) {
+          print('[PostService] Error recording More Info click: $e');
+        }
+      });
+    } catch (_) {}
   }
 
   /// Create and publish a new Generic Business Post
@@ -432,6 +511,96 @@ class PostService extends ChangeNotifier {
     _feedPosts.insert(0, fallbackPost);
     notifyListeners();
     return fallbackPost;
+  }
+
+  /// Update an existing Business Post
+  Future<PostItem?> updatePost(
+    String postId, {
+    required String title,
+    required String subtitle,
+    required String description,
+    String? targetLocation,
+    List<TargetLocationModel>? targetLocationItems,
+    List<String>? images,
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
+    final cleanPostId = postId.replaceAll(RegExp(r'[^0-9]'), '');
+    final payload = {
+      'title': title.trim(),
+      'subtitle': subtitle.trim(),
+      'description': description.trim(),
+      'target_location': targetLocation,
+      'target_locations': targetLocationItems?.map((e) => e.toMap()).toList(),
+      if (images != null) 'images': images,
+    };
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+      if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
+      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
+    };
+
+    PostItem? updatedPost;
+    if (cleanPostId.isNotEmpty) {
+      try {
+        final response = await http.put(
+          Uri.parse('$_baseUrl/api/posts/$cleanPostId'),
+          headers: headers,
+          body: jsonEncode(payload),
+        ).timeout(const Duration(seconds: 10));
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          if (data['success'] == true && data['post'] != null) {
+            updatedPost = PostItem.fromJson(data['post'] as Map<String, dynamic>);
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) {
+          print('[PostService] Error updating post on backend: $e');
+        }
+      }
+    }
+
+    // Update in-memory collections
+    final feedIndex = _feedPosts.indexWhere((p) => p.postId == postId);
+    if (feedIndex != -1) {
+      if (updatedPost != null) {
+        _feedPosts[feedIndex] = updatedPost;
+      } else {
+        final current = _feedPosts[feedIndex];
+        _feedPosts[feedIndex] = PostItem(
+          postId: current.postId,
+          numericPostId: current.numericPostId,
+          businessProfileId: current.businessProfileId,
+          numericBusinessId: current.numericBusinessId,
+          bizName: current.bizName,
+          title: title,
+          subtitle: subtitle,
+          description: description,
+          images: images ?? current.images,
+          brandLogo: current.brandLogo,
+          timeAgo: current.timeAgo,
+          createdAt: current.createdAt,
+          targetLocation: targetLocation ?? current.targetLocation,
+          targetLocationItems: targetLocationItems ?? current.targetLocationItems,
+          isSaved: current.isSaved,
+          moreInfoClickCount: current.moreInfoClickCount,
+          savedCount: current.savedCount,
+        );
+      }
+    }
+
+    final savedIndex = _savedPosts.indexWhere((p) => p.postId == postId);
+    if (savedIndex != -1 && updatedPost != null) {
+      _savedPosts[savedIndex] = updatedPost;
+    }
+
+    notifyListeners();
+    return updatedPost;
   }
 
   /// Delete a post by postId

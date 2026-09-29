@@ -23,11 +23,11 @@ class SkeletonPostCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Banner Image Skeleton
+          // Banner Image Skeleton (Matches 200px fixed container)
           const SkeletonLoader(
             width: double.infinity,
-            height: 180,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+            height: 200,
+            borderRadius: BorderRadius.zero,
           ),
 
           // Content Skeleton

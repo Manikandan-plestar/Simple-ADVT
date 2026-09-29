@@ -5,7 +5,12 @@ import '../../services/device_image_picker_service.dart';
 import '../../services/target_location_service.dart';
 import 'target_location_picker_modal.dart';
 
+import '../../services/post_service.dart';
+
 class CreatePostModal extends StatefulWidget {
+  final PostItem? initialPost;
+  final String? modalTitle;
+  final String? submitButtonText;
   final Function({
     required String title,
     required String subtitle,
@@ -17,6 +22,9 @@ class CreatePostModal extends StatefulWidget {
 
   const CreatePostModal({
     super.key,
+    this.initialPost,
+    this.modalTitle,
+    this.submitButtonText,
     required this.onSubmit,
   });
 
@@ -25,18 +33,32 @@ class CreatePostModal extends StatefulWidget {
 }
 
 class _CreatePostModalState extends State<CreatePostModal> {
-  final _titleController = TextEditingController();
-  final _descController = TextEditingController();
+  late final TextEditingController _titleController;
+  late final TextEditingController _descController;
 
   List<String> _selectedImages = [];
   bool _isProcessingImages = false;
 
-  List<TargetLocationModel> _selectedTargetLocations = [
-    TargetLocationService.defaultLocations.firstWhere(
-      (loc) => loc.placeId == 'city_tirunelveli',
-      orElse: () => TargetLocationService.defaultLocations.first,
-    ),
-  ];
+  late List<TargetLocationModel> _selectedTargetLocations;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController = TextEditingController(text: widget.initialPost?.title ?? '');
+    _descController = TextEditingController(text: widget.initialPost?.description ?? '');
+    _selectedImages = widget.initialPost?.images != null ? List.from(widget.initialPost!.images) : [];
+
+    if (widget.initialPost?.targetLocationItems != null && widget.initialPost!.targetLocationItems!.isNotEmpty) {
+      _selectedTargetLocations = List.from(widget.initialPost!.targetLocationItems!);
+    } else {
+      _selectedTargetLocations = [
+        TargetLocationService.defaultLocations.firstWhere(
+          (loc) => loc.placeId == 'city_tirunelveli',
+          orElse: () => TargetLocationService.defaultLocations.first,
+        ),
+      ];
+    }
+  }
 
   @override
   void dispose() {
@@ -178,13 +200,17 @@ class _CreatePostModalState extends State<CreatePostModal> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.post_add_rounded, color: Color(0xFF4F46E5), size: 22),
-                    SizedBox(width: 8),
+                    Icon(
+                      widget.initialPost != null ? Icons.edit_note_rounded : Icons.post_add_rounded,
+                      color: const Color(0xFF4F46E5),
+                      size: 22,
+                    ),
+                    const SizedBox(width: 8),
                     Text(
-                      'Create New Post',
-                      style: TextStyle(
+                      widget.modalTitle ?? (widget.initialPost != null ? 'Edit Post' : 'Create New Post'),
+                      style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
                         color: Color(0xFF111827),
@@ -422,8 +448,11 @@ class _CreatePostModalState extends State<CreatePostModal> {
                   elevation: 0,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
-                icon: const Icon(Icons.send_rounded, size: 18),
-                label: const Text('Publish Post', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                icon: Icon(widget.initialPost != null ? Icons.save_rounded : Icons.send_rounded, size: 18),
+                label: Text(
+                  widget.submitButtonText ?? (widget.initialPost != null ? 'Save Changes' : 'Publish Post'),
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                ),
               ),
             ),
           ],

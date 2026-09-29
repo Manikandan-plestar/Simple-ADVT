@@ -8,11 +8,12 @@ import '../business/cycling_post_image.dart';
 /// Features:
 /// - Smooth rotation and translation on horizontal drag.
 /// - Next 1-2 cards visible underneath in stack with subtle scaling and offset.
-/// - "More Info" and "Save" buttons on each card.
+/// - Bottom navigation & action controls: Previous, More Info, Save, and Next.
 /// - Full post image presentation with rounded corners and shadows.
 class TinderCardDeck extends StatefulWidget {
   final List<PostItem> posts;
   final Function(PostItem post) onToggleSave;
+  final Function(PostItem post)? onMoreInfoClick;
   final Function(PostItem post)? onBusinessTap;
   final VoidCallback? onReload;
 
@@ -20,6 +21,7 @@ class TinderCardDeck extends StatefulWidget {
     super.key,
     required this.posts,
     required this.onToggleSave,
+    this.onMoreInfoClick,
     this.onBusinessTap,
     this.onReload,
   });
@@ -154,6 +156,9 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
   }
 
   void _showMoreInfoModal(BuildContext context, PostItem post) {
+    if (widget.onMoreInfoClick != null) {
+      widget.onMoreInfoClick!(post);
+    }
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -275,9 +280,9 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
           ),
         ),
 
-        // Bottom Deck Controls: Previous Post, Save Post, Next Post
+        // Bottom Deck Controls: Previous Post, More Info, Save Post, Next Post
         Padding(
-          padding: const EdgeInsets.fromLTRB(24, 0, 24, 12),
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -292,7 +297,20 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
                 onTap: () => _swipeManual(false),
               ),
 
-              const SizedBox(width: 28),
+              const SizedBox(width: 16),
+
+              // More Info Action Button (Positioned before Save)
+              _buildActionButton(
+                icon: Icons.info_outline_rounded,
+                color: const Color(0xFF4F46E5),
+                backgroundColor: const Color(0xFFEEF2FF),
+                size: 50,
+                iconSize: 24,
+                tooltip: 'More Info',
+                onTap: () => _showMoreInfoModal(context, topPost),
+              ),
+
+              const SizedBox(width: 16),
 
               // Bookmark / Save Active Card Button
               _buildActionButton(
@@ -305,7 +323,7 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
                 onTap: () => widget.onToggleSave(topPost),
               ),
 
-              const SizedBox(width: 28),
+              const SizedBox(width: 16),
 
               // Next Post (Swipe Right / Forward)
               _buildActionButton(
@@ -482,106 +500,24 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
             ),
           ),
 
-          // 4. Bottom Section: Post Title & Action Buttons ([More Info] & [Save])
+          // 4. Bottom Section: Post Title
           Positioned(
             left: 16,
             right: 16,
-            bottom: 16,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Post Title
-                Text(
-                  post.displayTitle,
-                  style: const TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                    letterSpacing: -0.2,
-                    shadows: [
-                      Shadow(color: Colors.black87, blurRadius: 6, offset: Offset(0, 1)),
-                    ],
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 12),
-
-                // Primary Dual Action Buttons: [More Info] & [Save]
-                Row(
-                  children: [
-                    // 1. "More Info" Trigger Button
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () => _showMoreInfoModal(context, post),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF4F46E5),
-                          foregroundColor: Colors.white,
-                          elevation: 3,
-                          padding: const EdgeInsets.symmetric(vertical: 11),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                        ),
-                        icon: const Icon(Icons.info_outline_rounded, size: 18),
-                        label: const Text(
-                          'More Info',
-                          style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-
-                    // 2. "Save" Bookmark Button
-                    Material(
-                      color: Colors.transparent,
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(14),
-                        onTap: () => widget.onToggleSave(post),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(14),
-                          child: BackdropFilter(
-                            filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
-                              decoration: BoxDecoration(
-                                color: post.isSaved
-                                    ? const Color(0xFF10B981)
-                                    : Colors.white.withValues(alpha: 0.22),
-                                borderRadius: BorderRadius.circular(14),
-                                border: Border.all(
-                                  color: post.isSaved
-                                      ? const Color(0xFF059669)
-                                      : Colors.white.withValues(alpha: 0.35),
-                                  width: 1.2,
-                                ),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    post.isSaved ? Icons.bookmark_rounded : Icons.bookmark_border_rounded,
-                                    color: Colors.white,
-                                    size: 19,
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    post.isSaved ? 'Saved' : 'Save',
-                                    style: const TextStyle(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+            bottom: 18,
+            child: Text(
+              post.displayTitle,
+              style: const TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.bold,
+                color: Colors.white,
+                letterSpacing: -0.2,
+                shadows: [
+                  Shadow(color: Colors.black87, blurRadius: 6, offset: Offset(0, 1)),
+                ],
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],
@@ -590,66 +526,108 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
   }
 
   Widget _buildCardMedia(PostItem post, String imagePath) {
-    if (imagePath.isEmpty) {
-      return Container(
-        color: const Color(0xFF1E1B4B),
-        child: const Center(
-          child: Icon(Icons.campaign_rounded, size: 64, color: Color(0xFF818CF8)),
-        ),
+    if (imagePath.isEmpty && post.images.isEmpty) {
+      return _buildFallbackImage();
+    }
+
+    if (post.images.length > 1) {
+      return CyclingPostImage(
+        images: post.images,
+        height: double.infinity,
+        width: double.infinity,
+        fit: BoxFit.cover,
+        borderRadius: BorderRadius.zero,
+        showIndicators: true,
       );
     }
 
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        // Ambient Blurred Backdrop for edge-to-edge aesthetic fit
-        _buildImageWidget(imagePath, fit: BoxFit.cover),
-        BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(color: Colors.black.withValues(alpha: 0.4)),
-        ),
-
-        // Sharp Centered Image / Cycling Post Media
-        if (post.images.length > 1)
-          CyclingPostImage(
-            images: post.images,
-            height: double.infinity,
-            fit: BoxFit.contain,
-            borderRadius: BorderRadius.zero,
-            showIndicators: true,
-          )
-        else
-          Center(
-            child: _buildImageWidget(imagePath, fit: BoxFit.contain),
-          ),
-      ],
-    );
+    final targetPath = post.images.isNotEmpty ? post.images.first : imagePath;
+    return _buildImageWidget(targetPath, fit: BoxFit.cover);
   }
 
   Widget _buildImageWidget(String pathOrUrl, {required BoxFit fit}) {
     if (pathOrUrl.startsWith('assets/')) {
       return Image.asset(
         pathOrUrl,
+        width: double.infinity,
+        height: double.infinity,
         fit: fit,
-        errorBuilder: (_, __, ___) => Container(color: const Color(0xFF1E1B4B)),
+        errorBuilder: (_, __, ___) => _buildFallbackImage(),
       );
     }
     if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
       return Image.network(
         pathOrUrl,
+        width: double.infinity,
+        height: double.infinity,
         fit: fit,
-        errorBuilder: (_, __, ___) => Container(color: const Color(0xFF1E1B4B)),
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          final totalBytes = loadingProgress.expectedTotalBytes;
+          final loadedBytes = loadingProgress.cumulativeBytesLoaded;
+          final progress = totalBytes != null && totalBytes > 0 ? loadedBytes / totalBytes : null;
+
+          return Container(
+            color: const Color(0xFF1E1B4B),
+            child: Center(
+              child: SizedBox(
+                width: 32,
+                height: 32,
+                child: CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 2.5,
+                  color: const Color(0xFF818CF8),
+                ),
+              ),
+            ),
+          );
+        },
+        errorBuilder: (_, __, ___) => _buildFallbackImage(),
       );
     }
     final f = File(pathOrUrl);
     if (f.existsSync()) {
       return Image.file(
         f,
+        width: double.infinity,
+        height: double.infinity,
         fit: fit,
-        errorBuilder: (_, __, ___) => Container(color: const Color(0xFF1E1B4B)),
+        errorBuilder: (_, __, ___) => _buildFallbackImage(),
       );
     }
-    return Container(color: const Color(0xFF1E1B4B));
+    return _buildFallbackImage();
+  }
+
+  Widget _buildFallbackImage() {
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Color(0xFF312E81), Color(0xFF1E1B4B)],
+        ),
+      ),
+      child: const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.campaign_rounded, size: 56, color: Color(0xFF818CF8)),
+            SizedBox(height: 8),
+            Text(
+              'Simple ADVT',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFFA5B4FC),
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _buildAvatar(String? logo, double size) {
@@ -808,16 +786,16 @@ class _TinderPostMoreInfoSheet extends StatelessWidget {
                         ),
 
                         // View Profile Button
-                        OutlinedButton(
-                          onPressed: onBusinessTap,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF4F46E5),
-                            side: const BorderSide(color: Color(0xFF4F46E5), width: 1.2),
-                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          ),
-                          child: const Text('Profile', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        ),
+                        // OutlinedButton(
+                        //   onPressed: onBusinessTap,
+                        //   style: OutlinedButton.styleFrom(
+                        //     foregroundColor: const Color(0xFF4F46E5),
+                        //     side: const BorderSide(color: Color(0xFF4F46E5), width: 1.2),
+                        //     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        //     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        //   ),
+                        //   child: const Text('Profile', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        // ),
                       ],
                     ),
 

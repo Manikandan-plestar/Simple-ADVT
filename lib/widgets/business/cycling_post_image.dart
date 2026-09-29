@@ -148,6 +148,17 @@ class _CyclingPostImageState extends State<CyclingPostImage> {
   }
 
   Widget _buildImageSource(String pathOrUrl, {Key? key}) {
+    if (pathOrUrl.startsWith('assets/')) {
+      return Image.asset(
+        pathOrUrl,
+        key: key,
+        width: widget.width ?? double.infinity,
+        height: widget.height,
+        fit: widget.fit,
+        errorBuilder: (context, error, stackTrace) => _buildErrorFallback(),
+      );
+    }
+
     if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
       return Image.network(
         pathOrUrl,
@@ -157,13 +168,23 @@ class _CyclingPostImageState extends State<CyclingPostImage> {
         fit: widget.fit,
         loadingBuilder: (context, child, loadingProgress) {
           if (loadingProgress == null) return child;
+          final totalBytes = loadingProgress.expectedTotalBytes;
+          final loadedBytes = loadingProgress.cumulativeBytesLoaded;
+          final progress = totalBytes != null && totalBytes > 0 ? loadedBytes / totalBytes : null;
+
           return Container(
-            color: const Color(0xFFF3F4F6),
-            child: const Center(
+            width: widget.width ?? double.infinity,
+            height: widget.height,
+            color: const Color(0xFFF1F5F9),
+            child: Center(
               child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4F46E5)),
+                width: 26,
+                height: 26,
+                child: CircularProgressIndicator(
+                  value: progress,
+                  strokeWidth: 2.5,
+                  color: const Color(0xFF4F46E5),
+                ),
               ),
             ),
           );
@@ -191,9 +212,25 @@ class _CyclingPostImageState extends State<CyclingPostImage> {
     return Container(
       width: widget.width ?? double.infinity,
       height: widget.height,
-      color: const Color(0xFFEEF2FF),
+      decoration: const BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFFEEF2FF), Color(0xFFE0E7FF)],
+        ),
+      ),
       child: const Center(
-        child: Icon(Icons.image_not_supported_rounded, color: Color(0xFF4F46E5), size: 36),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.image_not_supported_rounded, color: Color(0xFF6366F1), size: 36),
+            SizedBox(height: 6),
+            Text(
+              'Image unavailable',
+              style: TextStyle(fontSize: 11, color: Color(0xFF6B7280), fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
       ),
     );
   }

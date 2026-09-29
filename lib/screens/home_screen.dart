@@ -364,6 +364,14 @@ class _HomeScreenState extends State<HomeScreen> {
                     : TinderCardDeck(
                         posts: filteredPosts,
                         onReload: _loadInitialData,
+                        onMoreInfoClick: (post) {
+                          postService.trackMoreInfoClick(
+                            post.postId,
+                            authToken: user.authToken,
+                            userId: user.userId,
+                            userEmail: user.email,
+                          );
+                        },
                         onToggleSave: (post) {
                           postService.toggleSavePost(
                             post.postId,

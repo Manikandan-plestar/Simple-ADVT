@@ -142,6 +142,98 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
     );
   }
 
+  void _openEditPostModal(BuildContext context, PostItem post, BusinessProfile biz) {
+    final postService = Provider.of<PostService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => CreatePostModal(
+        initialPost: post,
+        modalTitle: 'Edit Post',
+        submitButtonText: 'Save Changes',
+        onSubmit: ({
+          required String title,
+          required String subtitle,
+          required String description,
+          required String targetLocation,
+          List<TargetLocationModel>? targetLocations,
+          List<String>? images,
+        }) async {
+          await postService.updatePost(
+            post.postId,
+            title: title,
+            subtitle: subtitle,
+            description: description,
+            targetLocation: targetLocation,
+            targetLocationItems: targetLocations,
+            images: images,
+            authToken: authService.currentUser.authToken,
+            userId: authService.currentUser.userId,
+            userEmail: authService.currentUser.email,
+          );
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Post updated successfully!'),
+                backgroundColor: Color(0xFF10B981),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+            _loadData();
+          }
+        },
+      ),
+    );
+  }
+
+  void _confirmDeletePost(BuildContext context, PostItem post) {
+    final postService = Provider.of<PostService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('Delete Post?', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        content: const Text('Are you sure you want to delete this post?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF6B7280))),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              final success = await postService.deletePost(
+                post.postId,
+                authToken: authService.currentUser.authToken,
+                userId: authService.currentUser.userId,
+                userEmail: authService.currentUser.email,
+              );
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(success ? 'Post deleted successfully.' : 'Failed to delete post.'),
+                    backgroundColor: success ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                    behavior: SnackBarBehavior.floating,
+                  ),
+                );
+                _loadData();
+              }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFEF4444), foregroundColor: Colors.white),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _confirmDeleteBusiness(BuildContext context, BusinessProfile biz) {
     final authService = Provider.of<AuthService>(context, listen: false);
     final bizService = Provider.of<BusinessService>(context, listen: false);
@@ -646,6 +738,10 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
                           padding: const EdgeInsets.only(bottom: 16),
                           child: PostCard(
                             item: post,
+                            isOwner: isOwner,
+                            onEdit: isOwner ? () => _openEditPostModal(context, post, biz) : null,
+                            onDelete: isOwner ? () => _confirmDeletePost(context, post) : null,
+                            onImageLongPress: (img) => _showImageViewer(context, img),
                             onView: () {},
                             onToggleSave: () {
                               postService.toggleSavePost(

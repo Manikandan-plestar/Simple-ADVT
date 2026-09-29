@@ -149,6 +149,8 @@ async function initDatabase() {
         target_locations_json TEXT,
         images TEXT,
         brand_logo TEXT,
+        more_info_clicks INT DEFAULT 0,
+        saved_count INT DEFAULT 0,
         is_active TINYINT DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -159,7 +161,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
-    // Safe migration: Clean up confirmed unused legacy columns from posts if they exist
+    // Safe migration: Add engagement columns and clean up confirmed unused legacy columns from posts
     try {
       const [cols] = await connection.query(`
         SELECT COLUMN_NAME 
@@ -167,6 +169,21 @@ async function initDatabase() {
         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'posts'
       `, [DB_NAME]);
       const colNames = cols.map(c => c.COLUMN_NAME);
+
+      if (!colNames.includes('more_info_clicks')) {
+        await connection.query('ALTER TABLE posts ADD COLUMN more_info_clicks INT DEFAULT 0');
+        console.log('[Migration] Added column more_info_clicks to posts');
+      }
+      if (!colNames.includes('saved_count')) {
+        await connection.query('ALTER TABLE posts ADD COLUMN saved_count INT DEFAULT 0');
+        console.log('[Migration] Added column saved_count to posts');
+        // Synchronize initial saved_count with existing records in saved_posts
+        await connection.query(`
+          UPDATE posts p 
+          SET saved_count = (SELECT COUNT(*) FROM saved_posts sp WHERE sp.post_id = p.post_id)
+        `);
+        console.log('[Migration] Synchronized existing saved_count for all posts');
+      }
 
       if (colNames.includes('target_city')) {
         await connection.query('ALTER TABLE posts DROP COLUMN target_city');
@@ -185,7 +202,7 @@ async function initDatabase() {
         console.log('[Migration] Dropped unused column post_type from posts');
       }
     } catch (migErr) {
-      console.log('[Migration] Posts table cleanup notice:', migErr.message);
+      console.log('[Migration] Posts table migration notice:', migErr.message);
     }
 
     // 5. Table: saved_posts (Bookmarks for authenticated users)
@@ -1663,6 +1680,10 @@ function formatPostRow(r, isSaved = false) {
     images: parsedImages,
     brand_logo: r.brand_logo || r.business_profile_image || null,
     brandLogo: r.brand_logo || r.business_profile_image || null,
+    more_info_clicks: r.more_info_clicks !== undefined && r.more_info_clicks !== null ? parseInt(r.more_info_clicks, 10) : 0,
+    moreInfoClickCount: r.more_info_clicks !== undefined && r.more_info_clicks !== null ? parseInt(r.more_info_clicks, 10) : 0,
+    saved_count: r.saved_count !== undefined && r.saved_count !== null ? parseInt(r.saved_count, 10) : 0,
+    savedCount: r.saved_count !== undefined && r.saved_count !== null ? parseInt(r.saved_count, 10) : 0,
     is_active: r.is_active === 1,
     isSaved: isSaved || r.is_saved === 1,
     timeAgo: calculateTimeAgo(r.created_at),
@@ -1845,7 +1866,86 @@ app.get('/api/posts/:id', async (req, res) => {
 });
 
 /**
+ * PUT /api/posts/:id
+ * Update an existing business post (restricted strictly to the business profile / post owner)
+ */
+app.put('/api/posts/:id', authenticateUser, async (req, res) => {
+  try {
+    const rawId = req.params.id.toString().replace(/^[P0]*/i, '');
+    const postId = parseInt(rawId, 10);
+    const userId = req.user.id;
+
+    if (isNaN(postId)) return res.status(400).json({ success: false, message: 'Invalid post ID.' });
+
+    const [existing] = await pool.query(`
+      SELECT p.*, b.user_id AS business_owner_id
+      FROM posts p
+      LEFT JOIN business_profile b ON p.business_id = b.business_id
+      WHERE p.post_id = ? LIMIT 1
+    `, [postId]);
+
+    if (!existing || existing.length === 0) return res.status(404).json({ success: false, message: 'Post not found.' });
+
+    const post = existing[0];
+    if (post.user_id !== userId && post.business_owner_id !== userId) {
+      return res.status(403).json({ success: false, message: 'Permission denied. Only the owner can edit this post.' });
+    }
+
+    const { title, subtitle, description, target_location, targetLocation, target_locations, targetLocations, images } = req.body;
+
+    const updatedTitle = title !== undefined ? title.trim() : post.title;
+    if (!updatedTitle) return res.status(400).json({ success: false, message: 'Post title cannot be empty.' });
+
+    const updatedSubtitle = subtitle !== undefined ? subtitle.trim() : post.subtitle;
+    const updatedDesc = description !== undefined ? description.trim() : post.description;
+    const updatedTargetLoc = (target_location || targetLocation || post.target_location || '').trim();
+
+    let updatedImagesJson = post.images;
+    if (images !== undefined) {
+      updatedImagesJson = Array.isArray(images) ? JSON.stringify(images) : (typeof images === 'string' ? images : '[]');
+    }
+
+    let updatedTargetLocsJson = post.target_locations_json;
+    const locList = target_locations || targetLocations;
+    if (locList !== undefined) {
+      updatedTargetLocsJson = Array.isArray(locList) ? JSON.stringify(locList) : (typeof locList === 'string' ? locList : '[]');
+    }
+
+    await pool.query(`
+      UPDATE posts
+      SET title = ?, subtitle = ?, description = ?, target_location = ?, target_locations_json = ?, images = ?
+      WHERE post_id = ?
+    `, [
+      updatedTitle,
+      updatedSubtitle,
+      updatedDesc,
+      updatedTargetLoc,
+      updatedTargetLocsJson,
+      updatedImagesJson,
+      postId
+    ]);
+
+    const [updatedRows] = await pool.query(`
+      SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+      FROM posts p
+      LEFT JOIN business_profile b ON p.business_id = b.business_id
+      WHERE p.post_id = ? LIMIT 1
+    `, [postId]);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Post updated successfully!',
+      post: formatPostRow(updatedRows[0])
+    });
+  } catch (error) {
+    console.error('[Posts] Update error:', error.message);
+    return res.status(500).json({ success: false, message: 'Error updating post.' });
+  }
+});
+
+/**
  * DELETE /api/posts/:id
+ * Delete a post (restricted strictly to the business profile / post owner)
  */
 app.delete('/api/posts/:id', authenticateUser, async (req, res) => {
   try {
@@ -1853,13 +1953,30 @@ app.delete('/api/posts/:id', authenticateUser, async (req, res) => {
     const postId = parseInt(rawId, 10);
     const userId = req.user.id;
 
-    const [existing] = await pool.query('SELECT * FROM posts WHERE post_id = ? LIMIT 1', [postId]);
-    if (!existing || existing.length === 0) return res.status(404).json({ success: false, message: 'Post not found.' });
-    if (existing[0].user_id !== userId) return res.status(403).json({ success: false, message: 'Permission denied.' });
+    if (isNaN(postId)) return res.status(400).json({ success: false, message: 'Invalid post ID.' });
 
-    await pool.query('DELETE FROM posts WHERE post_id = ? AND user_id = ?', [postId, userId]);
+    const [existing] = await pool.query(`
+      SELECT p.*, b.user_id AS business_owner_id
+      FROM posts p
+      LEFT JOIN business_profile b ON p.business_id = b.business_id
+      WHERE p.post_id = ? LIMIT 1
+    `, [postId]);
+
+    if (!existing || existing.length === 0) return res.status(404).json({ success: false, message: 'Post not found.' });
+
+    const post = existing[0];
+    if (post.user_id !== userId && post.business_owner_id !== userId) {
+      return res.status(403).json({ success: false, message: 'Permission denied. Only the owner can delete this post.' });
+    }
+
+    // Clean up related bookmarks
+    await pool.query('DELETE FROM saved_posts WHERE post_id = ?', [postId]);
+    // Delete post
+    await pool.query('DELETE FROM posts WHERE post_id = ?', [postId]);
+
     return res.status(200).json({ success: true, message: 'Post deleted successfully.' });
   } catch (error) {
+    console.error('[Posts] Delete error:', error.message);
     return res.status(500).json({ success: false, message: 'Error deleting post.' });
   }
 });
@@ -1869,7 +1986,7 @@ app.delete('/api/posts/:id', authenticateUser, async (req, res) => {
 // ==========================================
 
 /**
- * POST /api/posts/:id/save (Toggle save/bookmark)
+ * POST /api/posts/:id/save (Toggle save/bookmark with atomic saved_count tracking)
  */
 app.post('/api/posts/:id/save', authenticateUser, async (req, res) => {
   try {
@@ -1881,14 +1998,72 @@ app.post('/api/posts/:id/save', authenticateUser, async (req, res) => {
     const [existing] = await pool.query('SELECT id FROM saved_posts WHERE user_id = ? AND post_id = ? LIMIT 1', [userId, postId]);
 
     if (existing && existing.length > 0) {
+      // 1. Remove user saved record
       await pool.query('DELETE FROM saved_posts WHERE user_id = ? AND post_id = ?', [userId, postId]);
-      return res.status(200).json({ success: true, isSaved: false, message: 'Post removed from saved items.' });
+      // 2. Atomic decrement saved_count (never below 0)
+      await pool.query('UPDATE posts SET saved_count = GREATEST(0, saved_count - 1) WHERE post_id = ?', [postId]);
+
+      const [countRows] = await pool.query('SELECT saved_count FROM posts WHERE post_id = ? LIMIT 1', [postId]);
+      const currentSavedCount = countRows && countRows.length > 0 ? countRows[0].saved_count : 0;
+
+      return res.status(200).json({
+        success: true,
+        isSaved: false,
+        savedCount: currentSavedCount,
+        saved_count: currentSavedCount,
+        message: 'Post removed from saved items.'
+      });
     } else {
-      await pool.query('INSERT INTO saved_posts (user_id, post_id) VALUES (?, ?)', [userId, postId]);
-      return res.status(200).json({ success: true, isSaved: true, message: 'Post saved successfully!' });
+      // 1. Add user saved record (INSERT IGNORE prevents duplicates)
+      const [insertResult] = await pool.query('INSERT IGNORE INTO saved_posts (user_id, post_id) VALUES (?, ?)', [userId, postId]);
+      
+      // 2. Atomic increment saved_count only if newly inserted
+      if (insertResult.affectedRows > 0) {
+        await pool.query('UPDATE posts SET saved_count = saved_count + 1 WHERE post_id = ?', [postId]);
+      }
+
+      const [countRows] = await pool.query('SELECT saved_count FROM posts WHERE post_id = ? LIMIT 1', [postId]);
+      const currentSavedCount = countRows && countRows.length > 0 ? countRows[0].saved_count : 0;
+
+      return res.status(200).json({
+        success: true,
+        isSaved: true,
+        savedCount: currentSavedCount,
+        saved_count: currentSavedCount,
+        message: 'Post saved successfully!'
+      });
     }
   } catch (error) {
+    console.error('[Posts] Error toggling save:', error.message);
     return res.status(500).json({ success: false, message: 'Error toggling saved post.' });
+  }
+});
+
+/**
+ * POST /api/posts/:id/more-info-click (and /api/posts/:id/click)
+ * Track "More Info" engagement click with atomic counter
+ */
+app.post(['/api/posts/:id/more-info-click', '/api/posts/:id/click'], async (req, res) => {
+  try {
+    const rawId = req.params.id.toString().replace(/^[P0]*/i, '');
+    const postId = parseInt(rawId, 10);
+    if (isNaN(postId)) return res.status(400).json({ success: false, message: 'Invalid post ID.' });
+
+    // Atomic increment for click count
+    await pool.query('UPDATE posts SET more_info_clicks = more_info_clicks + 1 WHERE post_id = ?', [postId]);
+
+    const [rows] = await pool.query('SELECT more_info_clicks, saved_count FROM posts WHERE post_id = ? LIMIT 1', [postId]);
+    const currentClicks = rows && rows.length > 0 ? rows[0].more_info_clicks : 0;
+
+    return res.status(200).json({
+      success: true,
+      postId: `P${postId.toString().padStart(3, '0')}`,
+      moreInfoClickCount: currentClicks,
+      more_info_clicks: currentClicks
+    });
+  } catch (error) {
+    console.error('[Engagement] Error tracking More Info click:', error.message);
+    return res.status(500).json({ success: false, message: 'Error tracking More Info click.' });
   }
 });
 
