@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
-class CustomBottomNavigation extends StatelessWidget {
+class CustomBottomNavigation extends StatefulWidget {
   final int currentIndex;
   final ValueChanged<int> onTap;
 
@@ -11,27 +12,109 @@ class CustomBottomNavigation extends StatelessWidget {
   });
 
   @override
+  State<CustomBottomNavigation> createState() => _CustomBottomNavigationState();
+}
+
+class _CustomBottomNavigationState extends State<CustomBottomNavigation> {
+  Timer? _sequenceTimer1;
+  Timer? _sequenceTimer2;
+  bool _showingPlus = false;
+
+  final List<_NavItemData> _items = const [
+    _NavItemData(
+      label: 'Saved',
+      activeIcon: Icons.bookmark_rounded,
+      inactiveIcon: Icons.bookmark_border_rounded,
+    ),
+    _NavItemData(
+      label: 'Explore',
+      activeIcon: Icons.explore_rounded,
+      inactiveIcon: Icons.explore_outlined,
+    ),
+    _NavItemData(
+      label: 'Settings',
+      activeIcon: Icons.settings_rounded,
+      inactiveIcon: Icons.settings_outlined,
+    ),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.currentIndex == 1) {
+      _startExploreAnimationSequence();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant CustomBottomNavigation oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentIndex != widget.currentIndex) {
+      if (widget.currentIndex == 1) {
+        // Tab changed to Explore -> Start icon animation sequence
+        _startExploreAnimationSequence();
+      } else {
+        // Tab changed away from Explore -> Cancel timers & reset
+        _cancelExploreAnimationSequence();
+      }
+    }
+  }
+
+  void _cancelExploreAnimationSequence() {
+    _sequenceTimer1?.cancel();
+    _sequenceTimer1 = null;
+    _sequenceTimer2?.cancel();
+    _sequenceTimer2 = null;
+    if (_showingPlus) {
+      if (mounted) {
+        setState(() {
+          _showingPlus = false;
+        });
+      } else {
+        _showingPlus = false;
+      }
+    }
+  }
+
+  void _startExploreAnimationSequence() {
+    _cancelExploreAnimationSequence();
+
+    // 1. Explore icon is displayed (_showingPlus is false)
+    // 2. Wait 3 seconds
+    _sequenceTimer1 = Timer(const Duration(seconds: 3), () {
+      if (!mounted || widget.currentIndex != 1) return;
+
+      // 3. Animate/rotate icon -> + icon
+      setState(() {
+        _showingPlus = true;
+      });
+
+      // 4. Keep + icon visible for 2 seconds
+      _sequenceTimer2 = Timer(const Duration(seconds: 2), () {
+        if (!mounted || widget.currentIndex != 1) return;
+
+        // 5. Animate/rotate icon -> Explore icon
+        setState(() {
+          _showingPlus = false;
+        });
+
+        // 6. Recursively loop the animation cycle while Explore tab is active
+        _startExploreAnimationSequence();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _cancelExploreAnimationSequence();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     const primaryColor = Color(0xFF6366F1); // Indigo / Purple
     const inactiveColor = Color(0xFF9CA3AF); // Slate Gray
-
-    final items = [
-      _NavItemData(
-        label: 'Saved',
-        activeIcon: Icons.bookmark_rounded,
-        inactiveIcon: Icons.bookmark_border_rounded,
-      ),
-      _NavItemData(
-        label: 'Explore',
-        activeIcon: Icons.explore_rounded,
-        inactiveIcon: Icons.explore_outlined,
-      ),
-      _NavItemData(
-        label: 'Settings',
-        activeIcon: Icons.settings_rounded,
-        inactiveIcon: Icons.settings_outlined,
-      ),
-    ];
+    final items = _items;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -39,7 +122,7 @@ class CustomBottomNavigation extends StatelessWidget {
         final tabWidth = totalWidth / items.length;
 
         return TweenAnimationBuilder<double>(
-          tween: Tween<double>(begin: currentIndex.toDouble(), end: currentIndex.toDouble()),
+          tween: Tween<double>(begin: widget.currentIndex.toDouble(), end: widget.currentIndex.toDouble()),
           duration: const Duration(milliseconds: 320),
           curve: Curves.easeInOutCubic,
           builder: (context, animIndex, child) {
@@ -64,12 +147,12 @@ class CustomBottomNavigation extends StatelessWidget {
                   child: Row(
                     children: List.generate(items.length, (index) {
                       final item = items[index];
-                      final isCurrent = index == currentIndex;
+                      final isCurrent = index == widget.currentIndex;
 
                       return Expanded(
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
-                          onTap: () => onTap(index),
+                          onTap: () => widget.onTap(index),
                           child: Padding(
                             padding: const EdgeInsets.only(top: 14, bottom: 8),
                             child: AnimatedOpacity(
@@ -108,7 +191,7 @@ class CustomBottomNavigation extends StatelessWidget {
                   left: (animIndex + 0.5) * tabWidth - 26,
                   bottom: 24,
                   child: GestureDetector(
-                    onTap: () => onTap(currentIndex),
+                    onTap: () => widget.onTap(widget.currentIndex),
                     child: Container(
                       width: 52,
                       height: 52,
@@ -123,19 +206,41 @@ class CustomBottomNavigation extends StatelessWidget {
                           ),
                         ],
                       ),
-                      child: AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 250),
-                        transitionBuilder: (child, animation) => ScaleTransition(
-                          scale: animation,
-                          child: child,
-                        ),
-                        child: Icon(
-                          items[currentIndex].activeIcon,
-                          key: ValueKey<int>(currentIndex),
-                          size: 26,
-                          color: Colors.white,
-                        ),
-                      ),
+                      child: widget.currentIndex == 1
+                          ? AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 380),
+                              transitionBuilder: (Widget child, Animation<double> animation) {
+                                final rotateAnimation = Tween<double>(begin: 0.5, end: 1.0).animate(
+                                  CurvedAnimation(parent: animation, curve: Curves.easeInOutCubic),
+                                );
+                                return RotationTransition(
+                                  turns: rotateAnimation,
+                                  child: ScaleTransition(
+                                    scale: animation,
+                                    child: child,
+                                  ),
+                                );
+                              },
+                              child: Icon(
+                                _showingPlus ? Icons.add_rounded : Icons.explore_rounded,
+                                key: ValueKey<bool>(_showingPlus),
+                                size: 26,
+                                color: Colors.white,
+                              ),
+                            )
+                          : AnimatedSwitcher(
+                              duration: const Duration(milliseconds: 250),
+                              transitionBuilder: (child, animation) => ScaleTransition(
+                                scale: animation,
+                                child: child,
+                              ),
+                              child: Icon(
+                                items[widget.currentIndex].activeIcon,
+                                key: ValueKey<int>(widget.currentIndex),
+                                size: 26,
+                                color: Colors.white,
+                              ),
+                            ),
                     ),
                   ),
                 ),

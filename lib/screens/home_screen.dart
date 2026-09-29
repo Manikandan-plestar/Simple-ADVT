@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../models/target_location_model.dart';
 import '../services/auth_service.dart';
 import '../services/post_service.dart';
 import '../services/business_service.dart';
 import '../services/notification_service.dart';
 import '../widgets/common/bottom_navigation.dart';
 import '../widgets/common/empty_state.dart';
+import '../widgets/business/create_post_modal.dart';
 import '../utils/text_utils.dart';
 import 'notifications_screen.dart';
 import 'saved_items_screen.dart';
@@ -133,14 +135,330 @@ class _HomeScreenState extends State<HomeScreen> {
               child: CustomBottomNavigation(
                 currentIndex: _currentBottomNavIndex,
                 onTap: (index) {
-                  setState(() {
-                    _currentBottomNavIndex = index;
-                  });
+                  if (index == _currentBottomNavIndex) {
+                    if (index == 1) {
+                      // Active Explore tab tapped -> Directly check business profile & open New Post flow
+                      _handleNewPostFlow();
+                    }
+                  } else {
+                    setState(() {
+                      _currentBottomNavIndex = index;
+                    });
+                  }
                 },
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Handles New Post flow according to business profile ownership cases
+  Future<void> _handleNewPostFlow() async {
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final bizService = Provider.of<BusinessService>(context, listen: false);
+    final user = authService.currentUser;
+
+    // Check user owned business profiles
+    List<BusinessProfile> userBusinesses = bizService.getUserBusinesses(user.userId);
+
+    if (userBusinesses.isEmpty && user.userId.isNotEmpty) {
+      userBusinesses = await bizService.fetchUserBusinesses(
+        userId: user.userId,
+        authToken: user.authToken,
+        userEmail: user.email,
+      );
+    }
+
+    if (!mounted) return;
+
+    // Case 3: No Business Profile
+    if (userBusinesses.isEmpty) {
+      _showNoBusinessProfileDialog();
+      return;
+    }
+
+    // Case 2: Only One Business Profile -> Directly open Post Creation Form
+    if (userBusinesses.length == 1) {
+      _openCreatePostModalForBiz(userBusinesses.first);
+      return;
+    }
+
+    // Case 1: Multiple Business Profiles -> Show Selection Screen
+    _showBusinessProfileSelectionModal(userBusinesses);
+  }
+
+  /// Case 3 Dialog: User has no business profiles
+  void _showNoBusinessProfileDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFEF3C7),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: const Icon(Icons.storefront_outlined, color: Color(0xFFD97706), size: 24),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'Business Profile Required',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'You need an active business profile to create and publish advertisement posts on Simple ADVT.',
+          style: TextStyle(fontSize: 14, color: Color(0xFF4B5563), height: 1.4),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF6B7280))),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF4F46E5),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () {
+              Navigator.pop(ctx);
+              Navigator.pushNamed(context, '/create-biz');
+            },
+            child: const Text('Create Business'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Case 1 Modal: User has multiple business profiles
+  void _showBusinessProfileSelectionModal(List<BusinessProfile> userBusinesses) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Drag handle
+            Center(
+              child: Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE5E7EB),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 4),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEEF2FF),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.business_rounded, color: Color(0xFF4F46E5), size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  const Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Select Business Profile',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF111827),
+                          ),
+                        ),
+                        SizedBox(height: 2),
+                        Text(
+                          'Choose a profile to publish this new post',
+                          style: TextStyle(fontSize: 12, color: Color(0xFF6B7280)),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close_rounded, color: Color(0xFF9CA3AF)),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: Color(0xFFF3F4F6)),
+
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                itemCount: userBusinesses.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                itemBuilder: (context, index) {
+                  final biz = userBusinesses[index];
+                  return Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () {
+                        Navigator.pop(ctx);
+                        _openCreatePostModalForBiz(biz);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Row(
+                          children: [
+                            // Business Avatar
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                width: 46,
+                                height: 46,
+                                color: const Color(0xFFEEF2FF),
+                                child: biz.image.isNotEmpty
+                                    ? Image.network(
+                                        biz.image,
+                                        fit: BoxFit.cover,
+                                        errorBuilder: (_, __, ___) => const Icon(
+                                          Icons.storefront_rounded,
+                                          color: Color(0xFF4F46E5),
+                                          size: 24,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        Icons.storefront_rounded,
+                                        color: Color(0xFF4F46E5),
+                                        size: 24,
+                                      ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+
+                            // Business Info
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    biz.displayName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF1E293B),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    '${biz.displayCategory} • ${biz.displayLocation}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+
+                            const Icon(
+                              Icons.chevron_right_rounded,
+                              color: Color(0xFF94A3B8),
+                              size: 20,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Opens Create Post Modal for the selected BusinessProfile
+  void _openCreatePostModalForBiz(BusinessProfile biz) {
+    final postService = Provider.of<PostService>(context, listen: false);
+    final authService = Provider.of<AuthService>(context, listen: false);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => CreatePostModal(
+        modalTitle: 'New Post for ${biz.displayName}',
+        onSubmit: ({
+          required String title,
+          required String subtitle,
+          required String description,
+          required String targetLocation,
+          List<TargetLocationModel>? targetLocations,
+          List<String>? images,
+        }) async {
+          await postService.createPost(
+            businessProfileId: biz.businessProfileId,
+            bizName: biz.name,
+            title: title,
+            subtitle: subtitle,
+            description: description,
+            targetLocation: targetLocation,
+            targetLocationItems: targetLocations,
+            images: images,
+            brandLogo: biz.image,
+            authToken: authService.currentUser.authToken,
+            userId: authService.currentUser.userId,
+            userEmail: authService.currentUser.email,
+          );
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Post published successfully!'),
+                backgroundColor: Color(0xFF10B981),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+            _loadInitialData();
+          }
+        },
       ),
     );
   }
