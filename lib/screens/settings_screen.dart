@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
+import '../services/business_service.dart';
 import '../utils/text_utils.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -176,7 +177,16 @@ class SettingsScreen extends StatelessWidget {
                     subtitle: 'View businesses you are actively following',
                     iconColor: const Color(0xFFD97706),
                     iconBg: const Color(0xFFFFFBEB),
-                    onTap: () => Navigator.pushNamed(context, '/followed'),
+                    onTap: () {
+                      final auth = Provider.of<AuthService>(context, listen: false);
+                      final biz = Provider.of<BusinessService>(context, listen: false);
+                      biz.fetchFollowedBusinesses(
+                        authToken: auth.currentUser.authToken,
+                        userId: auth.currentUser.userId.isNotEmpty ? auth.currentUser.userId : null,
+                        userEmail: auth.currentUser.email.isNotEmpty ? auth.currentUser.email : null,
+                      );
+                      Navigator.pushNamed(context, '/followed');
+                    },
                   ),
                 ],
               ),

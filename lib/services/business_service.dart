@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'api_client.dart';
 import '../utils/text_utils.dart';
 import 'post_service.dart';
@@ -58,17 +57,22 @@ class BusinessProfile {
   String get displayLocation => TextUtils.capitalizeWords(location);
   String get displayCity => TextUtils.capitalizeWords(city.isNotEmpty ? city : location);
   String get displayLocality => TextUtils.capitalizeWords(locality);
-  String get displayState => TextUtils.capitalizeWords(state);
-  String get displayCountry => TextUtils.capitalizeWords(country);
 
   factory BusinessProfile.fromJson(Map<String, dynamic> json) {
     final rawBizId = json['business_id'] ?? json['businessProfileId'] ?? 0;
-    final int? numBizId = rawBizId is int ? rawBizId : int.tryParse(rawBizId.toString().replaceAll(RegExp(r'[^0-9]'), ''));
-    final formattedBizId = json['business_profile_id'] as String? ?? (numBizId != null ? 'BP${numBizId.toString().padLeft(3, '0')}' : rawBizId.toString());
+    final int? numBizId = rawBizId is int
+        ? rawBizId
+        : int.tryParse(rawBizId.toString().replaceAll(RegExp(r'[^0-9]'), ''));
+    final formattedBizId = json['businessProfileId'] as String? ??
+        (numBizId != null ? 'BP${numBizId.toString().padLeft(3, '0')}' : rawBizId.toString());
 
-    final rawUserId = json['user_id'] ?? json['ownerUserId'] ?? 0;
-    final int? numUserId = rawUserId is int ? rawUserId : int.tryParse(rawUserId.toString().replaceAll(RegExp(r'[^0-9]'), ''));
-    final formattedUserId = json['owner_user_id'] as String? ?? (numUserId != null ? 'U${numUserId.toString().padLeft(3, '0')}' : rawUserId.toString());
+    final rawUserId = json['user_id'] ?? json['owner_user_id'] ?? json['ownerUserId'] ?? 0;
+    final int? numUserId = rawUserId is int
+        ? rawUserId
+        : int.tryParse(rawUserId.toString().replaceAll(RegExp(r'[^0-9]'), ''));
+    final formattedUserId = json['ownerUserId'] as String? ??
+        json['owner_user_id'] as String? ??
+        (numUserId != null ? 'U${numUserId.toString().padLeft(3, '0')}' : rawUserId.toString());
 
     List<String> imgList = [];
     if (json['images'] != null) {
@@ -94,6 +98,13 @@ class BusinessProfile {
     final locLocality = json['locality'] as String? ?? '';
     final locationDisplay = locCity.isNotEmpty ? locCity : (locLocality.isNotEmpty ? locLocality : (json['location'] as String? ?? 'Tirunelveli'));
 
+    final bool followed = json['isFollowed'] == true ||
+        json['is_followed'] == true ||
+        json['is_following'] == true ||
+        json['isFollowing'] == true ||
+        json['isFollowed'] == 1 ||
+        json['is_followed'] == 1;
+
     return BusinessProfile(
       businessProfileId: formattedBizId,
       numericBusinessId: numBizId,
@@ -114,21 +125,21 @@ class BusinessProfile {
       image: primaryImg.isNotEmpty ? primaryImg : 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=600&q=80',
       images: imgList,
       about: json['about'] as String? ?? '',
-      isFollowed: json['isFollowed'] as bool? ?? false,
+      isFollowed: followed,
     );
   }
 }
 
 class BusinessService extends ChangeNotifier {
+  final ApiClient _apiClient = ApiClient();
   final List<BusinessProfile> _businesses = [];
   final List<BusinessProfile> _followedBusinesses = [];
   String? _activeBusinessProfileId;
   bool _isLoading = false;
 
-  String get _baseUrl => ApiClient().baseUrl;
-  String get baseUrl => ApiClient().baseUrl;
+  String get baseUrl => _apiClient.baseUrl;
   set baseUrl(String url) {
-    ApiClient().setBaseUrl(url);
+    _apiClient.setBaseUrl(url);
     notifyListeners();
   }
 
@@ -172,90 +183,148 @@ class BusinessService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Toggle Follow / Unfollow a business profile (Persistent)
-  Future<void> toggleFollow(String businessProfileId, {String? authToken, String? userId, String? userEmail}) async {
-    final index = _businesses.indexWhere((b) => b.businessProfileId == businessProfileId);
-    bool newFollowed = true;
-    BusinessProfile? targetBiz;
-
-    if (index != -1) {
-      _businesses[index].isFollowed = !_businesses[index].isFollowed;
-      newFollowed = _businesses[index].isFollowed;
-      targetBiz = _businesses[index];
-    } else {
-      final fIdx = _followedBusinesses.indexWhere((b) => b.businessProfileId == businessProfileId);
-      if (fIdx != -1) {
-        targetBiz = _followedBusinesses[fIdx];
-        newFollowed = false;
-      }
-    }
-
-    if (newFollowed && targetBiz != null) {
-      if (!_followedBusinesses.any((b) => b.businessProfileId == businessProfileId)) {
-        _followedBusinesses.insert(0, targetBiz);
-      }
-    } else {
-      _followedBusinesses.removeWhere((b) => b.businessProfileId == businessProfileId);
-    }
-    notifyListeners();
-
-    // Sync with backend
+  /// Toggle Follow / Unfollow a business profile on the backend database
+  Future<bool> toggleFollow(
+    String businessProfileId, {
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
     final cleanBizId = businessProfileId.replaceAll(RegExp(r'[^0-9]'), '');
-    if (cleanBizId.isNotEmpty) {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-        if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-        if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
-        if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-      };
+    if (cleanBizId.isEmpty) return false;
 
-      try {
-        await http.post(
-          Uri.parse('$_baseUrl/api/business-profiles/$cleanBizId/follow'),
-          headers: headers,
-        ).timeout(const Duration(seconds: 8));
-      } catch (e) {
-        if (kDebugMode) {
-          print('[BusinessService] Error syncing follow: $e');
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    if (userId != null || userEmail != null) {
+      _apiClient.setCurrentUser(userId: userId, email: userEmail);
+    }
+
+    try {
+      final response = await _apiClient.post('/api/business-profiles/$cleanBizId/follow', {});
+
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        final bool isFollowedNow = response['isFollowed'] == true || response['is_following'] == true;
+
+        // 1. Update in all business profiles cache
+        for (final b in _businesses) {
+          if (b.businessProfileId == businessProfileId ||
+              b.businessProfileId.replaceAll(RegExp(r'[^0-9]'), '') == cleanBizId) {
+            b.isFollowed = isFollowedNow;
+          }
         }
+
+        // 2. Synchronize followedBusinesses list
+        if (isFollowedNow) {
+          final targetBiz = getBusinessById(businessProfileId);
+          if (targetBiz != null) {
+            targetBiz.isFollowed = true;
+            if (!_followedBusinesses.any((b) => b.businessProfileId == targetBiz.businessProfileId)) {
+              _followedBusinesses.insert(0, targetBiz);
+            }
+          } else {
+            // Fetch if not in memory
+            await fetchFollowedBusinesses(
+              authToken: authToken,
+              userId: userId,
+              userEmail: userEmail,
+            );
+          }
+        } else {
+          _followedBusinesses.removeWhere((b) =>
+              b.businessProfileId == businessProfileId ||
+              b.businessProfileId.replaceAll(RegExp(r'[^0-9]'), '') == cleanBizId);
+        }
+
+        notifyListeners();
+        return true;
+      } else {
+        debugPrint('[BusinessService] Follow API failed: $response');
+        return false;
       }
+    } catch (e) {
+      debugPrint('[BusinessService] Error syncing follow: $e');
+      return false;
     }
   }
 
-  /// Fetch followed businesses from backend
-  Future<List<BusinessProfile>> fetchFollowedBusinesses({String? authToken, String? userId, String? userEmail}) async {
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-      if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
-      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-    };
+  /// Check follow status for a single business from backend
+  Future<bool> checkFollowStatus(
+    String businessProfileId, {
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
+    final cleanBizId = businessProfileId.replaceAll(RegExp(r'[^0-9]'), '');
+    if (cleanBizId.isEmpty) return false;
+
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    if (userId != null || userEmail != null) {
+      _apiClient.setCurrentUser(userId: userId, email: userEmail);
+    }
 
     try {
-      final uri = Uri.parse('$_baseUrl/api/business-profiles/followed');
-      final response = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        if (data['success'] == true && data['businesses'] is List) {
-          final List list = data['businesses'] as List;
-          final fetched = list.map((item) => BusinessProfile.fromJson(item as Map<String, dynamic>)).toList();
-          _followedBusinesses.clear();
-          _followedBusinesses.addAll(fetched);
-
-          final followedIds = _followedBusinesses.map((b) => b.businessProfileId).toSet();
-          for (final b in _businesses) {
-            b.isFollowed = followedIds.contains(b.businessProfileId);
+      final response = await _apiClient.get('/api/business-profiles/$cleanBizId/follow-status');
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        final bool isFollowed = response['isFollowed'] == true || response['is_following'] == true;
+        for (final b in _businesses) {
+          if (b.businessProfileId == businessProfileId ||
+              b.businessProfileId.replaceAll(RegExp(r'[^0-9]'), '') == cleanBizId) {
+            b.isFollowed = isFollowed;
           }
-          notifyListeners();
-          return _followedBusinesses;
+        }
+        notifyListeners();
+        return isFollowed;
+      }
+    } catch (e) {
+      debugPrint('[BusinessService] Error checking follow status: $e');
+    }
+    return getBusinessById(businessProfileId)?.isFollowed ?? false;
+  }
+
+  /// Fetch followed businesses from backend database
+  Future<List<BusinessProfile>> fetchFollowedBusinesses({
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
+    _isLoading = true;
+    notifyListeners();
+
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    if (userId != null || userEmail != null) {
+      _apiClient.setCurrentUser(userId: userId, email: userEmail);
+    }
+
+    try {
+      final response = await _apiClient.get('/api/business-profiles/followed');
+      if (kDebugMode) {
+        print('[BusinessService] fetchFollowedBusinesses response: $response');
+      }
+
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        final List list = response['businesses'] as List? ?? [];
+        final fetched = list
+            .map((item) => BusinessProfile.fromJson(item as Map<String, dynamic>))
+            .toList();
+
+        for (var b in fetched) {
+          b.isFollowed = true;
+        }
+
+        _followedBusinesses.clear();
+        _followedBusinesses.addAll(fetched);
+
+        final followedIds = _followedBusinesses.map((b) => b.businessProfileId).toSet();
+        for (final b in _businesses) {
+          b.isFollowed = followedIds.contains(b.businessProfileId);
         }
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('[BusinessService] Error fetching followed businesses: $e');
-      }
+      debugPrint('[BusinessService] Error fetching followed businesses: $e');
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
+
     return _followedBusinesses;
   }
 
@@ -269,41 +338,34 @@ class BusinessService extends ChangeNotifier {
     notifyListeners();
 
     final cleanUserId = userId.trim();
-    final url = Uri.parse('$_baseUrl/api/business-profiles/my?user_id=${Uri.encodeComponent(cleanUserId)}');
-
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-      if (cleanUserId.isNotEmpty) 'x-user-id': cleanUserId,
-      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-    };
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    _apiClient.setCurrentUser(userId: cleanUserId, email: userEmail);
 
     try {
-      final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 10));
+      final response = await _apiClient.get('/api/business-profiles/my', query: {'user_id': cleanUserId});
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        if (data['success'] == true && data['profiles'] is List) {
-          final List list = data['profiles'] as List;
-          final fetched = list.map((item) => BusinessProfile.fromJson(item as Map<String, dynamic>)).toList();
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        final List list = response['profiles'] as List? ?? [];
+        final fetched = list
+            .map((item) => BusinessProfile.fromJson(item as Map<String, dynamic>))
+            .toList();
 
-          _businesses.removeWhere((b) {
-            final targetNum = _parseUserId(cleanUserId);
-            final bNum = _parseUserId(b.ownerUserId);
-            return b.ownerUserId == cleanUserId || (targetNum != null && bNum != null && targetNum == bNum);
-          });
+        _businesses.removeWhere((b) {
+          final targetNum = _parseUserId(cleanUserId);
+          final bNum = _parseUserId(b.ownerUserId);
+          return b.ownerUserId == cleanUserId || (targetNum != null && bNum != null && targetNum == bNum);
+        });
 
-          _businesses.addAll(fetched);
+        _businesses.addAll(fetched);
 
-          if (fetched.isNotEmpty && (_activeBusinessProfileId == null || !_businesses.any((b) => b.businessProfileId == _activeBusinessProfileId))) {
-            _activeBusinessProfileId = fetched.first.businessProfileId;
-          }
+        if (fetched.isNotEmpty &&
+            (_activeBusinessProfileId == null ||
+                !_businesses.any((b) => b.businessProfileId == _activeBusinessProfileId))) {
+          _activeBusinessProfileId = fetched.first.businessProfileId;
         }
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('[BusinessService] Error fetching user businesses: $e');
-      }
+      debugPrint('[BusinessService] Error fetching user businesses: $e');
     } finally {
       _isLoading = false;
       notifyListeners();
@@ -312,18 +374,35 @@ class BusinessService extends ChangeNotifier {
     return getUserBusinesses(cleanUserId);
   }
 
-  /// Fetch a single business profile by ID
-  Future<BusinessProfile?> fetchBusinessById(String businessProfileId) async {
+  /// Fetch a single business profile by ID from backend
+  Future<BusinessProfile?> fetchBusinessById(
+    String businessProfileId, {
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
     if (businessProfileId.trim().isEmpty) return null;
     final cleanId = businessProfileId.replaceAll(RegExp(r'[^0-9]'), '');
-    final url = Uri.parse('$_baseUrl/api/business-profiles/${cleanId.isNotEmpty ? cleanId : businessProfileId}');
+
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    if (userId != null || userEmail != null) {
+      _apiClient.setCurrentUser(userId: userId, email: userEmail);
+    }
 
     try {
-      final response = await http.get(url).timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        if (data['success'] == true && data['profile'] != null) {
-          final fetched = BusinessProfile.fromJson(data['profile'] as Map<String, dynamic>);
+      final response = await _apiClient.get('/api/business-profiles/${cleanId.isNotEmpty ? cleanId : businessProfileId}');
+
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        if (response['profile'] != null) {
+          final fetched = BusinessProfile.fromJson(response['profile'] as Map<String, dynamic>);
+
+          // Sync isFollowed with followedBusinesses cache if needed
+          if (!fetched.isFollowed) {
+            fetched.isFollowed = _followedBusinesses.any((f) =>
+                f.businessProfileId == fetched.businessProfileId ||
+                f.businessProfileId.replaceAll(RegExp(r'[^0-9]'), '') == cleanId);
+          }
+
           final existingIdx = _businesses.indexWhere((b) =>
               b.businessProfileId == fetched.businessProfileId ||
               (cleanId.isNotEmpty && b.businessProfileId.replaceAll(RegExp(r'[^0-9]'), '') == cleanId));
@@ -337,9 +416,7 @@ class BusinessService extends ChangeNotifier {
         }
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('[BusinessService] Error fetching business by ID: $e');
-      }
+      debugPrint('[BusinessService] Error fetching business by ID: $e');
     }
     return getBusinessById(businessProfileId);
   }
@@ -354,37 +431,32 @@ class BusinessService extends ChangeNotifier {
     final cleanQuery = query.trim();
     if (cleanQuery.isEmpty) return [];
 
-    final url = Uri.parse('$_baseUrl/api/business-profiles/search?q=${Uri.encodeComponent(cleanQuery)}');
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-      if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
-      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-    };
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    if (userId != null || userEmail != null) {
+      _apiClient.setCurrentUser(userId: userId, email: userEmail);
+    }
 
     try {
-      final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        if (data['success'] == true && data['profiles'] is List) {
-          final List list = data['profiles'] as List;
-          final results = list.map((item) => BusinessProfile.fromJson(item as Map<String, dynamic>)).toList();
-          
-          for (final item in results) {
-            final idx = _businesses.indexWhere((b) => b.businessProfileId == item.businessProfileId);
-            if (idx != -1) {
-              item.isFollowed = _businesses[idx].isFollowed;
-            } else {
-              item.isFollowed = _followedBusinesses.any((f) => f.businessProfileId == item.businessProfileId);
-            }
+      final response = await _apiClient.get('/api/business-profiles/search', query: {'q': cleanQuery});
+
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        final List list = response['profiles'] as List? ?? [];
+        final results = list
+            .map((item) => BusinessProfile.fromJson(item as Map<String, dynamic>))
+            .toList();
+
+        for (final item in results) {
+          final idx = _businesses.indexWhere((b) => b.businessProfileId == item.businessProfileId);
+          if (idx != -1) {
+            item.isFollowed = _businesses[idx].isFollowed;
+          } else {
+            item.isFollowed = _followedBusinesses.any((f) => f.businessProfileId == item.businessProfileId);
           }
-          return results;
         }
+        return results;
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('[BusinessService] Error searching business profiles: $e');
-      }
+      debugPrint('[BusinessService] Error searching business profiles: $e');
     }
 
     // Fallback to local matching
@@ -425,13 +497,8 @@ class BusinessService extends ChangeNotifier {
         ? images.first
         : "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=600&q=80";
 
-    final url = Uri.parse('$_baseUrl/api/business-profiles');
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-      if (cleanOwnerId.isNotEmpty) 'x-user-id': cleanOwnerId,
-      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-    };
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    _apiClient.setCurrentUser(userId: cleanOwnerId, email: userEmail);
 
     final payload = {
       'business_name': name.trim(),
@@ -453,20 +520,15 @@ class BusinessService extends ChangeNotifier {
     BusinessProfile? createdProfile;
 
     try {
-      final response = await http
-          .post(url, headers: headers, body: jsonEncode(payload))
-          .timeout(const Duration(seconds: 15));
+      final response = await _apiClient.post('/api/business-profiles', payload);
 
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        if (data['success'] == true && data['profile'] != null) {
-          createdProfile = BusinessProfile.fromJson(data['profile'] as Map<String, dynamic>);
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        if (response['profile'] != null) {
+          createdProfile = BusinessProfile.fromJson(response['profile'] as Map<String, dynamic>);
         }
       }
     } catch (e) {
-      if (kDebugMode) {
-        print('[BusinessService] Backend create request error: $e');
-      }
+      debugPrint('[BusinessService] Backend create request error: $e');
     }
 
     if (createdProfile == null) {
@@ -552,19 +614,15 @@ class BusinessService extends ChangeNotifier {
     notifyListeners();
 
     final rawId = businessProfileId.replaceAll(RegExp(r'[^0-9]'), '');
-    final url = Uri.parse('$_baseUrl/api/business-profiles/${rawId.isNotEmpty ? rawId : businessProfileId}');
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-      if (callerUserId != null && callerUserId.isNotEmpty) 'x-user-id': callerUserId.trim(),
-      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-    };
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    if (callerUserId != null || userEmail != null) {
+      _apiClient.setCurrentUser(userId: callerUserId, email: userEmail);
+    }
 
     try {
-      await http.put(
-        url,
-        headers: headers,
-        body: jsonEncode({
+      await _apiClient.put(
+        '/api/business-profiles/${rawId.isNotEmpty ? rawId : businessProfileId}',
+        {
           'business_name': name.trim(),
           'category': category.trim(),
           'business_phone': phone.trim(),
@@ -572,12 +630,10 @@ class BusinessService extends ChangeNotifier {
           'profile_image': images.isNotEmpty ? images.first : '',
           'images': images,
           'about': about.trim(),
-        }),
-      ).timeout(const Duration(seconds: 10));
+        },
+      );
     } catch (e) {
-      if (kDebugMode) {
-        print('[BusinessService] Backend update note: $e');
-      }
+      debugPrint('[BusinessService] Backend update note: $e');
     }
 
     return true;
@@ -609,20 +665,15 @@ class BusinessService extends ChangeNotifier {
     notifyListeners();
 
     final rawId = businessProfileId.replaceAll(RegExp(r'[^0-9]'), '');
-    final url = Uri.parse('$_baseUrl/api/business-profiles/${rawId.isNotEmpty ? rawId : businessProfileId}');
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-      if (callerUserId != null && callerUserId.isNotEmpty) 'x-user-id': callerUserId.trim(),
-      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-    };
+    if (authToken != null) _apiClient.setAuthToken(authToken);
+    if (callerUserId != null || userEmail != null) {
+      _apiClient.setCurrentUser(userId: callerUserId, email: userEmail);
+    }
 
     try {
-      await http.delete(url, headers: headers).timeout(const Duration(seconds: 10));
+      await _apiClient.delete('/api/business-profiles/${rawId.isNotEmpty ? rawId : businessProfileId}');
     } catch (e) {
-      if (kDebugMode) {
-        print('[BusinessService] Backend delete note: $e');
-      }
+      debugPrint('[BusinessService] Backend delete note: $e');
     }
 
     return true;

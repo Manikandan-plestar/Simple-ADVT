@@ -119,7 +119,21 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final user = authService.currentUser;
 
-    // Fetch posts targeted for the user's registered location
+    // 1. Fetch saved posts and followed businesses from database
+    await Future.wait([
+      postService.fetchSavedPosts(
+        authToken: user.authToken,
+        userId: user.userId.isNotEmpty ? user.userId : null,
+        userEmail: user.email.isNotEmpty ? user.email : null,
+      ),
+      bizService.fetchFollowedBusinesses(
+        userId: user.userId.isNotEmpty ? user.userId : null,
+        authToken: user.authToken,
+        userEmail: user.email.isNotEmpty ? user.email : null,
+      ),
+    ]);
+
+    // 2. Fetch posts targeted for the user's registered location
     await postService.fetchPosts(
       authToken: user.authToken,
       userId: user.userId,
@@ -137,12 +151,8 @@ class _HomeScreenState extends State<HomeScreen> {
         authToken: user.authToken,
         userEmail: user.email,
       );
-      await bizService.fetchFollowedBusinesses(
-        userId: user.userId,
-        authToken: user.authToken,
-        userEmail: user.email,
-      );
-      await postService.fetchSavedPosts(
+      final notifService = Provider.of<NotificationService>(context, listen: false);
+      await notifService.fetchNotifications(
         authToken: user.authToken,
         userId: user.userId,
         userEmail: user.email,
@@ -215,6 +225,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     setState(() {
                       _currentBottomNavIndex = index;
                     });
+                    if (index == 0) {
+                      final auth = Provider.of<AuthService>(context, listen: false);
+                      final pService = Provider.of<PostService>(context, listen: false);
+                      pService.fetchSavedPosts(
+                        authToken: auth.currentUser.authToken,
+                        userId: auth.currentUser.userId.isNotEmpty ? auth.currentUser.userId : null,
+                        userEmail: auth.currentUser.email.isNotEmpty ? auth.currentUser.email : null,
+                      );
+                    }
                   }
                 },
               ),

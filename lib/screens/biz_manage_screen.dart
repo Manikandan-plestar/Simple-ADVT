@@ -4,7 +4,6 @@ import '../models/target_location_model.dart';
 import '../services/auth_service.dart';
 import '../services/business_service.dart';
 import '../services/post_service.dart';
-import '../services/notification_service.dart';
 import '../widgets/business/create_post_modal.dart';
 import '../widgets/business/cycling_post_image.dart';
 
@@ -36,7 +35,6 @@ class _BizManageScreenState extends State<BizManageScreen> {
     final postService = Provider.of<PostService>(context, listen: false);
     final bizService = Provider.of<BusinessService>(context, listen: false);
     final authService = Provider.of<AuthService>(context, listen: false);
-    final notifService = Provider.of<NotificationService>(context, listen: false);
 
     showModalBottomSheet(
       context: context,
@@ -66,12 +64,6 @@ class _BizManageScreenState extends State<BizManageScreen> {
           );
 
           bizService.addPostToBusiness(bizId, newPost);
-
-          notifService.addNotification(
-            title: 'New Post Published',
-            message: '$bizName published "$title" in $targetLocation.',
-            type: 'post',
-          );
         },
       ),
     );

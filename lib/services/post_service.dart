@@ -257,6 +257,8 @@ class PostService extends ChangeNotifier {
             for (final p in fetchedPosts) {
               if (savedIds.contains(p.postId)) {
                 p.isSaved = true;
+              } else if (p.isSaved && !_savedPosts.any((s) => s.postId == p.postId)) {
+                _savedPosts.add(p);
               }
             }
             _feedPosts.clear();
@@ -278,110 +280,107 @@ class PostService extends ChangeNotifier {
 
   /// Fetch saved posts from backend for authenticated user
   Future<List<PostItem>> fetchSavedPosts({String? authToken, String? userId, String? userEmail}) async {
-    final headers = <String, String>{
-      'Content-Type': 'application/json',
-      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-      if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
-      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-    };
+    _isLoading = true;
+    notifyListeners();
+
+    final apiClient = ApiClient();
+    if (authToken != null && authToken.isNotEmpty) apiClient.setAuthToken(authToken);
+    if (userId != null || userEmail != null) {
+      apiClient.setCurrentUser(userId: userId, email: userEmail);
+    }
 
     try {
-      final uri = Uri.parse('$_baseUrl/api/posts/saved');
-      final response = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+      final response = await apiClient.get('/api/posts/saved');
+      if (kDebugMode) {
+        print('[PostService] fetchSavedPosts response: $response');
+      }
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        if (data['success'] == true && data['posts'] is List) {
-          final List list = data['posts'] as List;
-          final fetched = list.map((item) => PostItem.fromJson(item as Map<String, dynamic>)).toList();
-          _savedPosts.clear();
-          _savedPosts.addAll(fetched);
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        final List list = response['posts'] as List? ?? [];
+        final fetched = list.map((item) {
+          final p = PostItem.fromJson(item as Map<String, dynamic>);
+          p.isSaved = true;
+          return p;
+        }).toList();
 
-          // Update feed state as well
-          final savedIds = _savedPosts.map((p) => p.postId).toSet();
-          for (final p in _feedPosts) {
-            p.isSaved = savedIds.contains(p.postId);
-          }
-          notifyListeners();
-          return _savedPosts;
+        _savedPosts.clear();
+        _savedPosts.addAll(fetched);
+
+        // Update feed state as well
+        final savedIds = _savedPosts.map((p) => p.postId).toSet();
+        for (final p in _feedPosts) {
+          p.isSaved = savedIds.contains(p.postId);
         }
       }
     } catch (e) {
       if (kDebugMode) {
         print('[PostService] Error fetching saved posts: $e');
       }
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
     return _savedPosts;
   }
 
-  /// Toggle Save / Bookmark a post (Persistent with atomic savedCount sync)
-  Future<void> toggleSavePost(String postId, {String? authToken, String? userId, String? userEmail}) async {
-    // 1. Optimistically update local state
-    final feedIndex = _feedPosts.indexWhere((p) => p.postId == postId);
-    bool newSavedState = true;
-    PostItem? targetPost;
-
-    if (feedIndex != -1) {
-      _feedPosts[feedIndex].isSaved = !_feedPosts[feedIndex].isSaved;
-      newSavedState = _feedPosts[feedIndex].isSaved;
-      if (newSavedState) {
-        _feedPosts[feedIndex].savedCount += 1;
-      } else {
-        _feedPosts[feedIndex].savedCount = (_feedPosts[feedIndex].savedCount - 1).clamp(0, 999999);
-      }
-      targetPost = _feedPosts[feedIndex];
-    } else {
-      final savedIndex = _savedPosts.indexWhere((p) => p.postId == postId);
-      if (savedIndex != -1) {
-        targetPost = _savedPosts[savedIndex];
-        newSavedState = false;
-        targetPost.savedCount = (targetPost.savedCount - 1).clamp(0, 999999);
-      }
-    }
-
-    if (newSavedState && targetPost != null) {
-      if (!_savedPosts.any((p) => p.postId == postId)) {
-        _savedPosts.insert(0, targetPost);
-      }
-    } else {
-      _savedPosts.removeWhere((p) => p.postId == postId);
-    }
-    notifyListeners();
-
-    // 2. Sync with backend
+  /// Toggle Save / Bookmark a post (Persistent with backend database sync)
+  Future<bool> toggleSavePost(String postId, {String? authToken, String? userId, String? userEmail}) async {
     final cleanPostId = postId.replaceAll(RegExp(r'[^0-9]'), '');
-    if (cleanPostId.isNotEmpty) {
-      final headers = <String, String>{
-        'Content-Type': 'application/json',
-        if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
-        if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
-        if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
-      };
+    if (cleanPostId.isEmpty) return false;
 
-      try {
-        final response = await http.post(
-          Uri.parse('$_baseUrl/api/posts/$cleanPostId/save'),
-          headers: headers,
-        ).timeout(const Duration(seconds: 8));
+    final apiClient = ApiClient();
+    if (authToken != null && authToken.isNotEmpty) apiClient.setAuthToken(authToken);
+    if (userId != null || userEmail != null) {
+      apiClient.setCurrentUser(userId: userId, email: userEmail);
+    }
 
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          if (data['savedCount'] != null) {
-            final serverSavedCount = int.tryParse(data['savedCount'].toString()) ?? 0;
-            if (feedIndex != -1 && feedIndex < _feedPosts.length) {
-              _feedPosts[feedIndex].savedCount = serverSavedCount;
-            }
-            if (targetPost != null) {
-              targetPost.savedCount = serverSavedCount;
-            }
-            notifyListeners();
+    try {
+      final response = await apiClient.post('/api/posts/$cleanPostId/save', {});
+
+      if (response != null && response is Map<String, dynamic> && response['success'] == true) {
+        final bool isSavedNow = response['isSaved'] == true || response['is_saved'] == true || response['isSaved'] == 1;
+        final int serverSavedCount = response['savedCount'] != null
+            ? int.tryParse(response['savedCount'].toString()) ?? 0
+            : 0;
+
+        final feedIndex = _feedPosts.indexWhere((p) => p.postId == postId);
+        PostItem? targetPost;
+
+        if (feedIndex != -1) {
+          _feedPosts[feedIndex].isSaved = isSavedNow;
+          if (response['savedCount'] != null) {
+            _feedPosts[feedIndex].savedCount = serverSavedCount;
           }
+          targetPost = _feedPosts[feedIndex];
         }
-      } catch (e) {
-        if (kDebugMode) {
-          print('[PostService] Error syncing saved post: $e');
+
+        if (isSavedNow) {
+          if (targetPost != null) {
+            targetPost.isSaved = true;
+            if (!_savedPosts.any((p) => p.postId == postId)) {
+              _savedPosts.insert(0, targetPost);
+            }
+          } else {
+            // Re-fetch saved posts from backend to get full post data
+            await fetchSavedPosts(
+              authToken: authToken,
+              userId: userId,
+              userEmail: userEmail,
+            );
+          }
+        } else {
+          _savedPosts.removeWhere((p) => p.postId == postId);
         }
+
+        notifyListeners();
+        return true;
+      } else {
+        debugPrint('[PostService] Save API returned failure: $response');
+        return false;
       }
+    } catch (e) {
+      debugPrint('[PostService] Error syncing saved post with backend: $e');
+      return false;
     }
   }
 

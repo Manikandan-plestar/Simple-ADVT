@@ -40,33 +40,7 @@ class BusinessCard extends StatelessWidget {
               children: [
                 ClipRRect(
                   borderRadius: BorderRadius.circular(12),
-                  child: Image.network(
-                    business.image,
-                    width: 48,
-                    height: 48,
-                    fit: BoxFit.cover,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return Container(
-                        width: 48,
-                        height: 48,
-                        color: const Color(0xFFF3F4F6),
-                        child: const Center(
-                          child: SizedBox(
-                            width: 14,
-                            height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 1.5, color: Color(0xFF4F46E5)),
-                          ),
-                        ),
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) => Container(
-                      width: 48,
-                      height: 48,
-                      color: const Color(0xFFEEF2FF),
-                      child: const Icon(Icons.store_rounded, color: Color(0xFF4F46E5)),
-                    ),
-                  ),
+                  child: _buildBusinessImage(business.image),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -114,6 +88,58 @@ class BusinessCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildBusinessImage(String imageUrl) {
+    if (imageUrl.trim().isEmpty) {
+      return Container(
+        width: 48,
+        height: 48,
+        color: const Color(0xFFEEF2FF),
+        child: const Icon(Icons.store_rounded, color: Color(0xFF4F46E5), size: 24),
+      );
+    }
+
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      return Image.network(
+        imageUrl,
+        width: 48,
+        height: 48,
+        fit: BoxFit.cover,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return Container(
+            width: 48,
+            height: 48,
+            color: const Color(0xFFF3F4F6),
+            child: const Center(
+              child: SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 1.5, color: Color(0xFF4F46E5)),
+              ),
+            ),
+          );
+        },
+        errorBuilder: (context, error, stackTrace) => Container(
+          width: 48,
+          height: 48,
+          color: const Color(0xFFEEF2FF),
+          child: const Icon(Icons.store_rounded, color: Color(0xFF4F46E5), size: 24),
+        ),
+      );
+    }
+
+    if (imageUrl.startsWith('assets/')) {
+      return Image.asset(imageUrl, width: 48, height: 48, fit: BoxFit.cover);
+    }
+
+    return Container(
+      width: 48,
+      height: 48,
+      color: const Color(0xFFEEF2FF),
+      child: const Icon(Icons.store_rounded, color: Color(0xFF4F46E5), size: 24),
     );
   }
 }

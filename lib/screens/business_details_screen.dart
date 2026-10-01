@@ -28,6 +28,8 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
   bool _showStickyHeader = false;
   bool _isLoading = true;
 
+  bool _isFollowLoading = false;
+
   @override
   void initState() {
     super.initState();
@@ -65,16 +67,22 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
     final authService = Provider.of<AuthService>(context, listen: false);
     final bizService = Provider.of<BusinessService>(context, listen: false);
     final postService = Provider.of<PostService>(context, listen: false);
+    final user = authService.currentUser;
 
-    // 1. Fetch this business profile
-    await bizService.fetchBusinessById(widget.businessProfileId);
+    // 1. Fetch this business profile with user authentication context
+    await bizService.fetchBusinessById(
+      widget.businessProfileId,
+      authToken: user.authToken,
+      userId: user.userId,
+      userEmail: user.email,
+    );
 
     // 2. Fetch user's businesses if logged in (for ownership)
-    if (authService.currentUser.userId.isNotEmpty) {
+    if (user.userId.isNotEmpty) {
       await bizService.fetchUserBusinesses(
-        userId: authService.currentUser.userId,
-        authToken: authService.currentUser.authToken,
-        userEmail: authService.currentUser.email,
+        userId: user.userId,
+        authToken: user.authToken,
+        userEmail: user.email,
       );
     }
 
@@ -559,14 +567,29 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
                           ),
                           if (!isOwner) ...[
                             ElevatedButton.icon(
-                              onPressed: () {
-                                bizService.toggleFollow(
-                                  biz.businessProfileId,
-                                  authToken: authService.currentUser.authToken,
-                                  userId: authService.currentUser.userId,
-                                  userEmail: authService.currentUser.email,
-                                );
-                              },
+                              onPressed: _isFollowLoading
+                                  ? null
+                                  : () async {
+                                      setState(() => _isFollowLoading = true);
+                                      final success = await bizService.toggleFollow(
+                                        biz.businessProfileId,
+                                        authToken: authService.currentUser.authToken,
+                                        userId: authService.currentUser.userId,
+                                        userEmail: authService.currentUser.email,
+                                      );
+                                      if (mounted) {
+                                        setState(() => _isFollowLoading = false);
+                                        if (!success) {
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('Failed to update follow status. Please try again.'),
+                                              backgroundColor: Color(0xFFEF4444),
+                                              duration: Duration(seconds: 2),
+                                            ),
+                                          );
+                                        }
+                                      }
+                                    },
                               style: ElevatedButton.styleFrom(
                                 backgroundColor: biz.isFollowed ? const Color(0xFFF3F4F6) : const Color(0xFF4F46E5),
                                 foregroundColor: biz.isFollowed ? const Color(0xFF374151) : Colors.white,
@@ -574,10 +597,19 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
                                 padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                               ),
-                              icon: Icon(
-                                biz.isFollowed ? Icons.check_rounded : Icons.add_rounded,
-                                size: 16,
-                              ),
+                              icon: _isFollowLoading
+                                  ? SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: biz.isFollowed ? const Color(0xFF4F46E5) : Colors.white,
+                                      ),
+                                    )
+                                  : Icon(
+                                      biz.isFollowed ? Icons.check_rounded : Icons.add_rounded,
+                                      size: 16,
+                                    ),
                               label: Text(
                                 biz.isFollowed ? 'Following' : 'Follow',
                                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),

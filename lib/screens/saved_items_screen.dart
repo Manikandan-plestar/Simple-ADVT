@@ -16,27 +16,24 @@ class SavedItemsScreen extends StatefulWidget {
 }
 
 class _SavedItemsScreenState extends State<SavedItemsScreen> {
-  bool _isInitialLoaded = false;
-
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (!_isInitialLoaded) {
-      _isInitialLoaded = true;
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadSavedPosts();
-    }
+    });
   }
 
   Future<void> _loadSavedPosts() async {
+    if (!mounted) return;
     final authService = Provider.of<AuthService>(context, listen: false);
     final postService = Provider.of<PostService>(context, listen: false);
-    if (authService.currentUser.userId.isNotEmpty) {
-      await postService.fetchSavedPosts(
-        authToken: authService.currentUser.authToken,
-        userId: authService.currentUser.userId,
-        userEmail: authService.currentUser.email,
-      );
-    }
+    final user = authService.currentUser;
+    await postService.fetchSavedPosts(
+      authToken: user.authToken,
+      userId: user.userId.isNotEmpty ? user.userId : null,
+      userEmail: user.email.isNotEmpty ? user.email : null,
+    );
   }
 
   @override
