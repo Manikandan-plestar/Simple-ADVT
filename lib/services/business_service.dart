@@ -344,6 +344,62 @@ class BusinessService extends ChangeNotifier {
     return getBusinessById(businessProfileId);
   }
 
+  /// Search business profiles using backend API with local cache fallback
+  Future<List<BusinessProfile>> searchBusinessProfiles(
+    String query, {
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
+    final cleanQuery = query.trim();
+    if (cleanQuery.isEmpty) return [];
+
+    final url = Uri.parse('$_baseUrl/api/business-profiles/search?q=${Uri.encodeComponent(cleanQuery)}');
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+      if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
+      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
+    };
+
+    try {
+      final response = await http.get(url, headers: headers).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (data['success'] == true && data['profiles'] is List) {
+          final List list = data['profiles'] as List;
+          final results = list.map((item) => BusinessProfile.fromJson(item as Map<String, dynamic>)).toList();
+          
+          for (final item in results) {
+            final idx = _businesses.indexWhere((b) => b.businessProfileId == item.businessProfileId);
+            if (idx != -1) {
+              item.isFollowed = _businesses[idx].isFollowed;
+            } else {
+              item.isFollowed = _followedBusinesses.any((f) => f.businessProfileId == item.businessProfileId);
+            }
+          }
+          return results;
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[BusinessService] Error searching business profiles: $e');
+      }
+    }
+
+    // Fallback to local matching
+    final q = cleanQuery.toLowerCase();
+    return _businesses.where((b) {
+      return b.name.toLowerCase().contains(q) ||
+          b.category.toLowerCase().contains(q) ||
+          b.location.toLowerCase().contains(q) ||
+          b.city.toLowerCase().contains(q) ||
+          b.locality.toLowerCase().contains(q) ||
+          b.registeredAddress.toLowerCase().contains(q) ||
+          b.about.toLowerCase().contains(q);
+    }).toList();
+  }
+
   /// Create a new Business Profile in MySQL database
   Future<BusinessProfile> createBusinessProfile({
     required String ownerUserId,

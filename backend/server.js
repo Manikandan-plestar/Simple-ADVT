@@ -1522,6 +1522,87 @@ app.get(['/api/business-profiles/my', '/api/business-profiles'], authenticateUse
 });
 
 /**
+ * GET /api/business-profiles/search
+ * Query parameters:
+ *  - q or query or search: string to search
+ * Searches business_name, category, locality, city, state, about, etc. from business_profile table
+ */
+app.get('/api/business-profiles/search', async (req, res) => {
+  try {
+    const q = (req.query.q || req.query.query || req.query.search || '').trim();
+    if (!q) {
+      return res.status(200).json({ success: true, count: 0, profiles: [] });
+    }
+
+    const searchTerm = `%${q}%`;
+    const [rows] = await pool.query(
+      `SELECT * FROM business_profile 
+       WHERE business_name LIKE ? 
+          OR category LIKE ? 
+          OR locality LIKE ? 
+          OR city LIKE ? 
+          OR state LIKE ? 
+          OR about LIKE ? 
+          OR full_address LIKE ?
+       ORDER BY 
+          CASE 
+            WHEN LOWER(business_name) = LOWER(?) THEN 1
+            WHEN LOWER(business_name) LIKE LOWER(?) THEN 2
+            WHEN LOWER(category) LIKE LOWER(?) THEN 3
+            WHEN LOWER(category) LIKE LOWER(?) THEN 4
+            ELSE 5
+          END,
+          business_id DESC
+       LIMIT 50`,
+      [searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, q, `${q}%`, q, `${q}%`]
+    );
+
+    const user = await getUserFromRequest(req);
+    let followedBizIds = new Set();
+    if (user) {
+      const [followedRows] = await pool.query('SELECT business_id FROM followed_businesses WHERE user_id = ?', [user.id]);
+      followedBizIds = new Set(followedRows.map(f => f.business_id));
+    }
+
+    const profiles = rows.map(r => {
+      let parsedImages = [];
+      try {
+        parsedImages = r.images ? (typeof r.images === 'string' ? JSON.parse(r.images) : r.images) : [];
+      } catch (_) {
+        parsedImages = r.profile_image ? [r.profile_image] : [];
+      }
+      return {
+        business_id: r.business_id,
+        business_profile_id: `BP${r.business_id.toString().padStart(3, '0')}`,
+        user_id: r.user_id,
+        owner_user_id: `U${r.user_id.toString().padStart(3, '0')}`,
+        business_name: capitalizeWords(r.business_name),
+        category: r.category || 'General Store',
+        business_phone: r.business_phone,
+        country_code: r.country_code || '+91',
+        full_address: r.full_address,
+        locality: r.locality || '',
+        city: r.city || '',
+        state: r.state || '',
+        country: r.country || 'India',
+        latitude: parseFloat(r.latitude) || 0.0,
+        longitude: parseFloat(r.longitude) || 0.0,
+        profile_image: r.profile_image || (parsedImages.length > 0 ? parsedImages[0] : ''),
+        images: parsedImages,
+        about: r.about || '',
+        isFollowed: followedBizIds.has(r.business_id),
+        created_at: r.created_at
+      };
+    });
+
+    return res.status(200).json({ success: true, count: profiles.length, profiles });
+  } catch (error) {
+    console.error('[Search Business Profiles Error]:', error);
+    return res.status(500).json({ success: false, message: 'Error searching business profiles.' });
+  }
+});
+
+/**
  * GET /api/business-profiles/:id
  */
 app.get('/api/business-profiles/:id', async (req, res) => {

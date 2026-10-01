@@ -105,7 +105,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             color: Color(0xFF111827),
                           ),
                           decoration: const InputDecoration(
-                            hintText: 'Search businesses, shops, services...',
+                            hintText: 'Search a category or shop/business name...',
                             hintStyle: TextStyle(fontSize: 12, color: Color(0xFF9CA3AF)),
                             border: InputBorder.none,
                             isDense: true,
