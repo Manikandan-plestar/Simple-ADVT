@@ -30,9 +30,22 @@ const SMTP_PASS = process.env.SMTP_PASS || '';
 const FROM_EMAIL = process.env.FROM_EMAIL || `"ADVT App" <${SMTP_USER || 'no-reply@advtapp.com'}>`;
 
 const JWT_SECRET = process.env.JWT_SECRET || 'simple_advt_jwt_super_secret_key_2026_xyz';
+const JWT_SECRET_PREVIOUS = process.env.JWT_SECRET_PREVIOUS || '';
+const ALLOW_LEGACY_IDENTITY = process.env.ALLOW_LEGACY_IDENTITY !== 'false'; // Default: true for backward compatibility
+const ENFORCE_PROFILE_AUTH = process.env.ENFORCE_PROFILE_AUTH === 'true'; // Default: false for backward compatibility
+const ENABLE_TEST_OTP = process.env.ENABLE_TEST_OTP === 'true' || process.env.NODE_ENV !== 'production';
+const TEST_OTP_ALLOWLIST_RAW = process.env.TEST_OTP_ALLOWLIST || 'test1@gmail.com,test2@gmail.com';
+const TEST_OTP_ALLOWLIST = TEST_OTP_ALLOWLIST_RAW.split(',').map(e => e.trim().toLowerCase()).filter(e => e.length > 0);
+const VERIFY_PLAY_PURCHASES = process.env.VERIFY_PLAY_PURCHASES === 'true';
+
 const OTP_EXPIRY_MINUTES = parseInt(process.env.OTP_EXPIRY_MINUTES || '5', 10);
 const RATE_LIMIT_MAX = parseInt(process.env.RATE_LIMIT_MAX_ATTEMPTS || '3', 10);
 const RATE_LIMIT_WINDOW_MIN = parseInt(process.env.RATE_LIMIT_WINDOW_MINUTES || '10', 10);
+
+// In strict production mode, validate JWT_SECRET length
+if (process.env.NODE_ENV === 'production' && (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32)) {
+  console.error('⚠️ [SECURITY WARNING] In production, JWT_SECRET should be at least 32 characters long.');
+}
 
 // ==========================================
 // 2. MYSQL DATABASE CONNECTION POOL & SCHEMA
@@ -951,19 +964,17 @@ setInterval(runExpiredPostsCleanup, 60 * 1000);
 // ==========================================
 // 6. HELPER FUNCTIONS & LOGIC
 // ==========================================
-const TEST_ACCOUNTS = {
-  'test1@gmail.com': '123456',
-  'test2@gmail.com': '123456'
-};
-
 function isTestAccount(email) {
-  return Object.prototype.hasOwnProperty.call(TEST_ACCOUNTS, (email || '').toLowerCase().trim());
+  if (!ENABLE_TEST_OTP) return false;
+  const clean = (email || '').toLowerCase().trim();
+  return TEST_OTP_ALLOWLIST.includes(clean);
 }
 
 function verifyTestCredentials(email, otp) {
+  if (!ENABLE_TEST_OTP) return false;
   const cleanEmail = (email || '').toLowerCase().trim();
   const cleanOtp = (otp || '').toString().trim();
-  return TEST_ACCOUNTS[cleanEmail] === cleanOtp;
+  return TEST_OTP_ALLOWLIST.includes(cleanEmail) && cleanOtp === '123456';
 }
 
 function generate6DigitOtp() {
@@ -1103,9 +1114,12 @@ async function processAndSendOtp(email) {
 // ==========================================
 const app = express();
 
+// Trust reverse proxy for Google Cloud / Nginx HTTPS termination
+app.set('trust proxy', 1);
+
 app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use((req, res, next) => {
   console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
@@ -1118,6 +1132,16 @@ app.get('/api/health', (req, res) => {
     status: 'online',
     service: 'ADVT App Server',
     timestamp: new Date().toISOString()
+  });
+});
+
+// App Config & Version Management (Force Update Support)
+app.get(['/api/app-config', '/api/config'], (req, res) => {
+  res.status(200).json({
+    success: true,
+    min_supported_version: process.env.MIN_SUPPORTED_APP_VERSION || '1.0.0',
+    latest_version: process.env.LATEST_APP_VERSION || '1.0.0',
+    force_update: false
   });
 });
 
@@ -1378,32 +1402,55 @@ async function getUserFromRequest(req) {
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7).trim();
       try {
-        const decoded = jwt.verify(token, JWT_SECRET);
-        if (decoded.id) {
+        let decoded = null;
+        try {
+          decoded = jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'] });
+        } catch (jwtErr) {
+          if (JWT_SECRET_PREVIOUS) {
+            decoded = jwt.verify(token, JWT_SECRET_PREVIOUS, { algorithms: ['HS256'] });
+          } else {
+            throw jwtErr;
+          }
+        }
+
+        if (decoded && decoded.id) {
           const [rows] = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [decoded.id]);
           if (rows && rows.length > 0) user = rows[0];
         }
-        if (!user && decoded.email) {
+        if (!user && decoded && decoded.email) {
           const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [decoded.email.toLowerCase().trim()]);
           if (rows && rows.length > 0) user = rows[0];
         }
-        if (!user && decoded.id) {
-          user = { id: decoded.id, email: decoded.email || `user${decoded.id}@simpleadvt.com`, full_name: 'App User' };
+        if (!user && decoded && decoded.id) {
+          user = { id: decoded.id, email: decoded.email || `user${decoded.id}@advtapp.com`, full_name: 'App User' };
         }
+
+        // If authenticated with valid JWT, strictly use JWT identity
+        if (user) return user;
       } catch (_) { }
     }
 
+    // If legacy fallbacks are disabled, reject non-JWT authentication
+    if (!ALLOW_LEGACY_IDENTITY) {
+      return null;
+    }
+
+    const appVersion = req.headers['x-app-version'] || 'unknown';
+    let legacyDetected = false;
+
     if (!user && req.headers['x-user-id']) {
+      legacyDetected = true;
       const rawId = req.headers['x-user-id'].toString().replace(/^U0*/i, '');
       const numId = parseInt(rawId, 10);
       if (!isNaN(numId) && numId > 0) {
         const [rows] = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [numId]);
         if (rows && rows.length > 0) user = rows[0];
-        else user = { id: numId, email: req.headers['x-user-email'] || `user${numId}@simpleadvt.com`, full_name: 'App User' };
+        else user = { id: numId, email: req.headers['x-user-email'] || `user${numId}@advtapp.com`, full_name: 'App User' };
       }
     }
 
     if (!user && req.headers['x-user-email']) {
+      legacyDetected = true;
       const cleanEmail = req.headers['x-user-email'].toString().toLowerCase().trim();
       const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [cleanEmail]);
       if (rows && rows.length > 0) user = rows[0];
@@ -1413,16 +1460,18 @@ async function getUserFromRequest(req) {
     }
 
     if (!user && req.query && req.query.user_id) {
+      legacyDetected = true;
       const rawId = req.query.user_id.toString().replace(/^U0*/i, '');
       const numId = parseInt(rawId, 10);
       if (!isNaN(numId) && numId > 0) {
         const [rows] = await pool.query('SELECT * FROM users WHERE id = ? LIMIT 1', [numId]);
         if (rows && rows.length > 0) user = rows[0];
-        else user = { id: numId, email: req.query.email || `user${numId}@simpleadvt.com`, full_name: 'App User' };
+        else user = { id: numId, email: req.query.email || `user${numId}@advtapp.com`, full_name: 'App User' };
       }
     }
 
     if (!user && req.query && req.query.email) {
+      legacyDetected = true;
       const cleanEmail = req.query.email.toString().toLowerCase().trim();
       const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [cleanEmail]);
       if (rows && rows.length > 0) user = rows[0];
@@ -1431,11 +1480,14 @@ async function getUserFromRequest(req) {
       }
     }
 
-    // Default fallback to test user id 1 if no authentication is supplied in development
-    if (!user && process.env.NODE_ENV !== 'production') {
+    if (legacyDetected && user) {
+      console.log(`[LEGACY-AUTH] route=${req.baseUrl || ''}${req.path} method=${req.method} appVersion=${appVersion}`);
+    }
+
+    // In non-production only, fallback for local quick testing if explicitly configured
+    if (!user && process.env.NODE_ENV === 'development' && process.env.ENABLE_DEV_FALLBACK_USER === 'true') {
       const [rows] = await pool.query('SELECT * FROM users ORDER BY id ASC LIMIT 1');
       if (rows && rows.length > 0) user = rows[0];
-      else user = { id: 1, email: 'test1@gmail.com', full_name: 'Mani Kumar' };
     }
 
     return user;
@@ -1464,12 +1516,31 @@ async function authenticateUser(req, res, next) {
  */
 app.get('/api/user-profile', async (req, res) => {
   try {
-    const email = req.query.email;
+    const user = await getUserFromRequest(req);
+    const appVersion = req.headers['x-app-version'] || 'unknown';
+
+    if (ENFORCE_PROFILE_AUTH && !user) {
+      return res.status(401).json({ success: false, message: 'Authentication required. Please login.' });
+    }
+
+    if (!user) {
+      console.log(`[AUTHZ-MONITOR] route=/api/user-profile unauthenticated query appVersion=${appVersion}`);
+    }
+
+    // If authenticated, prefer the user's verified email/id; otherwise fallback to query email in monitor mode
+    const email = (user && user.email) ? user.email : req.query.email;
     if (!email || !isValidEmailFormat(email)) {
       return res.status(400).json({ success: false, message: 'Valid email is required.' });
     }
 
-    const [rows] = await pool.query('SELECT * FROM users WHERE email = ? LIMIT 1', [email.trim().toLowerCase()]);
+    let querySql = 'SELECT * FROM users WHERE email = ? LIMIT 1';
+    let queryParams = [email.trim().toLowerCase()];
+    if (user && user.id) {
+      querySql = 'SELECT * FROM users WHERE id = ? LIMIT 1';
+      queryParams = [user.id];
+    }
+
+    const [rows] = await pool.query(querySql, queryParams);
     if (!rows || rows.length === 0) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
@@ -1508,25 +1579,45 @@ app.get('/api/user-profile', async (req, res) => {
  */
 app.put('/api/update-profile', async (req, res) => {
   try {
+    const user = await getUserFromRequest(req);
+    const appVersion = req.headers['x-app-version'] || 'unknown';
+
+    if (ENFORCE_PROFILE_AUTH && !user) {
+      return res.status(401).json({ success: false, message: 'Authentication required. Please login.' });
+    }
+
+    if (!user) {
+      console.log(`[AUTHZ-MONITOR] route=/api/update-profile unauthenticated update appVersion=${appVersion}`);
+    }
+
     const { email, full_name, name, full_address, address, locality = '', city = '', state = '', country = '', latitude, longitude } = req.body;
-    const cleanEmail = (email || '').trim().toLowerCase();
+    const targetEmail = (user && user.email) ? user.email : (email || '').trim().toLowerCase();
     const cleanName = capitalizeWords((full_name || name || '').trim());
     const cleanAddr = (full_address || address || '').trim();
 
     const addr = extractAddressComponents(cleanAddr, locality, city, state, country);
 
-    await pool.query(`
-      UPDATE users 
-      SET full_name = ?, full_address = ?, locality = ?, city = ?, state = ?, country = ?,
-          latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude)
-      WHERE email = ?
-    `, [cleanName, addr.full_address, addr.locality, addr.city, addr.state, addr.country, latitude, longitude, cleanEmail]);
+    if (user && user.id) {
+      await pool.query(`
+        UPDATE users 
+        SET full_name = ?, full_address = ?, locality = ?, city = ?, state = ?, country = ?,
+            latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude)
+        WHERE id = ?
+      `, [cleanName, addr.full_address, addr.locality, addr.city, addr.state, addr.country, latitude, longitude, user.id]);
+    } else {
+      await pool.query(`
+        UPDATE users 
+        SET full_name = ?, full_address = ?, locality = ?, city = ?, state = ?, country = ?,
+            latitude = COALESCE(?, latitude), longitude = COALESCE(?, longitude)
+        WHERE email = ?
+      `, [cleanName, addr.full_address, addr.locality, addr.city, addr.state, addr.country, latitude, longitude, targetEmail]);
+    }
 
     return res.status(200).json({
       success: true,
       message: 'Profile updated successfully!',
       user: {
-        email: cleanEmail,
+        email: targetEmail,
         full_name: cleanName,
         name: cleanName,
         full_address: addr.full_address,
