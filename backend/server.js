@@ -660,47 +660,63 @@ function getEffectiveTargetLocations(targetLocations) {
 }
 
 /**
- * Tests whether a user's registration location falls within a specific target location.
+ * Tests whether a user's registration/current location falls within a specific target location.
  */
 function isUserCoveredByTarget(target, userLoc) {
   if (!target || !userLoc) return false;
 
+  const cleanTargetName = normalizeStr(target.name);
+  const cleanTargetType = normalizeStr(target.type);
+
+  // Global / Worldwide / All Locations coverage
+  if (
+    cleanTargetName === 'all' ||
+    cleanTargetName === 'worldwide' ||
+    cleanTargetName === 'global' ||
+    cleanTargetName === 'everywhere' ||
+    cleanTargetName === 'all locations' ||
+    cleanTargetType === 'worldwide' ||
+    cleanTargetType === 'all'
+  ) {
+    return true;
+  }
+
   const rank = getLocationRank(target.type);
-  const targetName = target.name;
 
-  const userCountry = userLoc.country;
-  const userState = userLoc.state;
-  const userCity = userLoc.city;
-  const userLocality = userLoc.locality;
+  const userCountry = normalizeStr(userLoc.country);
+  const userState = normalizeStr(userLoc.state);
+  const userCity = normalizeStr(userLoc.city);
+  const userLocality = normalizeStr(userLoc.locality);
+  const userFullAddr = normalizeStr(userLoc.full_address);
 
-  const targetCountry = target.country || (rank === 1 ? targetName : '');
-  const targetState = target.state || (rank === 2 ? targetName : '');
-  const targetCity = target.city || (rank === 3 ? targetName : '');
-  const targetLocality = target.locality || (rank >= 4 ? targetName : '');
+  const targetCountry = normalizeStr(target.country || (rank === 1 ? cleanTargetName : ''));
+  const targetState = normalizeStr(target.state || (rank === 2 ? cleanTargetName : ''));
+  const targetCity = normalizeStr(target.city || (rank === 3 ? cleanTargetName : ''));
+  const targetLocality = normalizeStr(target.locality || (rank >= 4 ? cleanTargetName : ''));
 
   // 1. Target is Country (rank 1)
   if (rank === 1) {
-    if (userCountry && (userCountry === targetName || userCountry === targetCountry)) return true;
-    if (target.countryCode && userLoc.countryCode && target.countryCode === userLoc.countryCode) return true;
-    if (userLoc.full_address && (userLoc.full_address.includes(targetName) || (targetCountry && userLoc.full_address.includes(targetCountry)))) return true;
+    if (userCountry && (userCountry === cleanTargetName || userCountry === targetCountry)) return true;
+    if (target.countryCode && userLoc.countryCode && normalizeStr(target.countryCode) === normalizeStr(userLoc.countryCode)) return true;
+    if (userFullAddr && (userFullAddr.includes(cleanTargetName) || (targetCountry && userFullAddr.includes(targetCountry)))) return true;
     return false;
   }
 
-  // If user has country specified and target has country specified, they must match
+  // Country mismatch check (if both have specified countries)
   if (userCountry && targetCountry && userCountry !== targetCountry) {
     return false;
   }
 
   // 2. Target is State (rank 2)
   if (rank === 2) {
-    if (userState && (userState === targetName || userState === targetState)) return true;
-    if (userLoc.full_address && userLoc.full_address.includes(targetName)) return true;
+    if (userState && (userState === cleanTargetName || userState === targetState)) return true;
+    if (userFullAddr && userFullAddr.includes(cleanTargetName)) return true;
     const dist = calculateDistanceKm(target.latitude, target.longitude, userLoc.latitude, userLoc.longitude);
     if (dist < 350) return true;
     return false;
   }
 
-  // If user has state specified and target has state specified, they must match
+  // State mismatch check (if both have specified states)
   if (userState && targetState && userState !== targetState) {
     return false;
   }
@@ -708,11 +724,13 @@ function isUserCoveredByTarget(target, userLoc) {
   // 3. Target is City / District (rank 3)
   if (rank === 3) {
     // Exact city match
-    if (userCity && (userCity === targetName || userCity === targetCity)) return true;
+    if (userCity && (userCity === cleanTargetName || userCity === targetCity)) return true;
     // User locality matches city name or vice versa
-    if (userLocality && userLocality === targetName) return true;
-    // Address string match
-    if (userLoc.full_address && (userLoc.full_address.includes(targetName) || (targetCity && userLoc.full_address.includes(targetCity)))) {
+    if (userLocality && (userLocality === cleanTargetName || userLocality.includes(cleanTargetName) || cleanTargetName.includes(userLocality))) return true;
+    // Containment check between user city and target city
+    if (userCity && (userCity.includes(cleanTargetName) || cleanTargetName.includes(userCity))) return true;
+    // Address string containment
+    if (userFullAddr && (userFullAddr.includes(cleanTargetName) || (targetCity && userFullAddr.includes(targetCity)))) {
       return true;
     }
     // Coordinate proximity (< 45 km)
@@ -724,16 +742,20 @@ function isUserCoveredByTarget(target, userLoc) {
   // 4. Target is Locality / Sub-locality (rank 4)
   if (rank >= 4) {
     // Exact locality match
-    if (userLocality && (userLocality === targetName || userLocality === targetLocality)) {
+    if (userLocality && (userLocality === cleanTargetName || userLocality === targetLocality)) {
+      return true;
+    }
+    // User locality containment
+    if (userLocality && (userLocality.includes(cleanTargetName) || cleanTargetName.includes(userLocality))) {
       return true;
     }
     // Proximity check (< 10 km)
     const dist = calculateDistanceKm(target.latitude, target.longitude, userLoc.latitude, userLoc.longitude);
     if (dist < 10) return true;
 
-    // Address containment check only if user locality is not an explicit different locality
-    if (userLoc.full_address && userLoc.full_address.includes(targetName)) {
-      if (!userLocality || userLocality.includes(targetName) || targetName.includes(userLocality)) {
+    // Address containment check
+    if (userFullAddr && userFullAddr.includes(cleanTargetName)) {
+      if (!userLocality || userLocality.includes(cleanTargetName) || cleanTargetName.includes(userLocality)) {
         return true;
       }
     }
@@ -756,7 +778,7 @@ function isPostVisibleToUser(post, user) {
   if (targets.length === 0) {
     if (!post.target_location) return true;
     const cleanTarget = normalizeStr(post.target_location);
-    if (cleanTarget === 'all' || cleanTarget === '') return true;
+    if (cleanTarget === 'all' || cleanTarget === 'worldwide' || cleanTarget === 'global' || cleanTarget === '') return true;
 
     if (userLoc.city && cleanTarget.includes(userLoc.city)) return true;
     if (userLoc.locality && cleanTarget.includes(userLoc.locality)) return true;
@@ -766,7 +788,7 @@ function isPostVisibleToUser(post, user) {
     return false;
   }
 
-  // Specificity Rule
+  // Specificity Rule: more-specific child location takes precedence
   const effectiveTargets = getEffectiveTargetLocations(targets);
 
   for (const target of effectiveTargets) {
@@ -1931,7 +1953,24 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
  */
 app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) => {
   try {
-    const { business_id, search, q } = req.query;
+    const {
+      business_id,
+      search,
+      q,
+      locality,
+      city,
+      state,
+      country,
+      location,
+      target_location,
+      latitude,
+      longitude,
+      lat,
+      lng,
+      page,
+      limit
+    } = req.query;
+
     const user = await getUserFromRequest(req);
 
     // 1. Direct Business Profile Posts (when viewing a specific business's own posts)
@@ -1953,11 +1992,17 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) =
         }
 
         const posts = rows.map(r => formatPostRow(r, savedPostIds.has(r.post_id)));
-        return res.status(200).json({ success: true, count: posts.length, posts });
+        return res.status(200).json({
+          success: true,
+          count: posts.length,
+          total_count: posts.length,
+          totalCount: posts.length,
+          posts
+        });
       }
     }
 
-    // 2. Explore discovery feed - fetch active candidate posts
+    // 2. Explore discovery feed - fetch all active candidate posts across all business profiles
     const [allRows] = await pool.query(`
       SELECT p.*, b.business_name, b.profile_image AS business_profile_image
       FROM posts p
@@ -1966,19 +2011,29 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) =
       ORDER BY p.created_at DESC
     `);
 
-    // Determine target location context (from authenticated user registration or query fallback)
-    let userLocationContext = user;
-    if (!userLocationContext) {
-      const { locality, city, state, country, location, target_location } = req.query;
-      if (locality || city || state || country || location || target_location) {
-        userLocationContext = {
-          locality: locality || '',
-          city: city || location || target_location || '',
-          state: state || '',
-          country: country || 'India',
-          full_address: location || target_location || ''
-        };
-      }
+    // Determine target location context:
+    // Prioritize current device GPS / query parameters and merge with user profile fallback
+    const reqLocality = (locality || '').trim();
+    const reqCity = (city || location || target_location || '').trim();
+    const reqState = (state || '').trim();
+    const reqCountry = (country || '').trim();
+    const reqLat = parseFloat(latitude || lat) || 0.0;
+    const reqLng = parseFloat(longitude || lng) || 0.0;
+    const reqAddress = (location || target_location || '').trim();
+
+    let userLocationContext = null;
+    if (reqLocality || reqCity || reqState || reqCountry || reqLat !== 0.0 || reqLng !== 0.0 || reqAddress || user) {
+      userLocationContext = {
+        id: user?.id,
+        email: user?.email,
+        locality: reqLocality || user?.locality || '',
+        city: reqCity || user?.city || '',
+        state: reqState || user?.state || '',
+        country: reqCountry || user?.country || 'India',
+        latitude: reqLat !== 0.0 ? reqLat : (parseFloat(user?.latitude) || 0.0),
+        longitude: reqLng !== 0.0 ? reqLng : (parseFloat(user?.longitude) || 0.0),
+        full_address: reqAddress || user?.full_address || `${reqLocality ? reqLocality + ', ' : ''}${reqCity ? reqCity + ', ' : ''}${reqState ? reqState + ', ' : ''}${reqCountry || 'India'}`
+      };
     }
 
     // Apply location targeting engine (hierarchical containment + specificity precedence) + user search
@@ -1994,9 +2049,28 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) =
       savedPostIds = new Set(savedRows.map(s => s.post_id));
     }
 
-    const posts = eligibleRows.map(r => formatPostRow(r, savedPostIds.has(r.post_id)));
+    const totalEligibleCount = eligibleRows.length;
 
-    return res.status(200).json({ success: true, count: posts.length, posts });
+    // Optional pagination slice (preserving full total_count)
+    let pagedRows = eligibleRows;
+    if (limit) {
+      const limitNum = parseInt(limit.toString(), 10);
+      const pageNum = parseInt((page || '1').toString(), 10);
+      if (!isNaN(limitNum) && limitNum > 0) {
+        const offset = Math.max(0, (pageNum - 1) * limitNum);
+        pagedRows = eligibleRows.slice(offset, offset + limitNum);
+      }
+    }
+
+    const posts = pagedRows.map(r => formatPostRow(r, savedPostIds.has(r.post_id)));
+
+    return res.status(200).json({
+      success: true,
+      count: posts.length,
+      total_count: totalEligibleCount,
+      totalCount: totalEligibleCount,
+      posts
+    });
   } catch (error) {
     console.error('[Posts/Explore] Error fetching feed:', error.message);
     return res.status(500).json({ success: false, message: 'Error fetching posts.' });

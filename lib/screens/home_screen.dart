@@ -133,7 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     ]);
 
-    // 2. Fetch posts targeted for the user's registered location
+    // 2. Fetch posts targeted for the user's current / registered location
     await postService.fetchPosts(
       authToken: user.authToken,
       userId: user.userId,
@@ -143,6 +143,8 @@ class _HomeScreenState extends State<HomeScreen> {
       city: user.city,
       state: user.state,
       country: user.country,
+      latitude: user.latitude,
+      longitude: user.longitude,
     );
 
     if (user.userId.isNotEmpty) {
@@ -190,55 +192,87 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
-      body: SafeArea(
-        child: Stack(
-          children: [
-            // Exact 3 bottom navigation tabs:
-            // 0: Saved (Left)
-            // 1: Explore (Center - Tinder-Style Card Stack)
-            // 2: Settings (Right - My Profile, Business Profile, Followed, Logout)
-            IndexedStack(
-              index: _currentBottomNavIndex,
-              children: [
-                const SavedItemsScreen(isTab: true),
-                _buildExploreTab(),
-                const SettingsScreen(),
-              ],
-            ),
+    final isSearchActive = _isSearchFocused || _searchController.text.isNotEmpty;
+    // System back will only close the application if the user is on the Explore tab (index 1) and search is inactive
+    final canPopRoot = _currentBottomNavIndex == 1 && !isSearchActive;
 
-            // Bottom Navigation Bar
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: CustomBottomNavigation(
-                currentIndex: _currentBottomNavIndex,
-                onTap: (index) {
-                  if (index == _currentBottomNavIndex) {
-                    if (index == 1) {
-                      // Active Explore tab tapped -> Directly check business profile & open New Post flow
-                      _handleNewPostFlow();
-                    }
-                  } else {
-                    setState(() {
-                      _currentBottomNavIndex = index;
-                    });
-                    if (index == 0) {
-                      final auth = Provider.of<AuthService>(context, listen: false);
-                      final pService = Provider.of<PostService>(context, listen: false);
-                      pService.fetchSavedPosts(
-                        authToken: auth.currentUser.authToken,
-                        userId: auth.currentUser.userId.isNotEmpty ? auth.currentUser.userId : null,
-                        userEmail: auth.currentUser.email.isNotEmpty ? auth.currentUser.email : null,
-                      );
-                    }
-                  }
-                },
+    return PopScope(
+      canPop: canPopRoot,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+
+        // 1. If search is active/focused, dismiss search first and stay on Explore
+        if (isSearchActive) {
+          _searchFocusNode.unfocus();
+          _clearSearch();
+          setState(() {
+            _isSearchFocused = false;
+          });
+          return;
+        }
+
+        // 2. If user is on Saved (0) or Settings (2), navigate back to Home/Explore tab (1)
+        if (_currentBottomNavIndex != 1) {
+          setState(() {
+            _currentBottomNavIndex = 1;
+          });
+          _loadInitialData();
+          return;
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF8FAFC),
+        resizeToAvoidBottomInset: false, // Keeps bottom navigation fixed at the bottom when keyboard opens
+        body: SafeArea(
+          child: Stack(
+            children: [
+              // Exact 3 bottom navigation tabs:
+              // 0: Saved (Left)
+              // 1: Explore (Center - Tinder-Style Card Stack)
+              // 2: Settings (Right - My Profile, Business Profile, Followed, Logout)
+              IndexedStack(
+                index: _currentBottomNavIndex,
+                children: [
+                  const SavedItemsScreen(isTab: true),
+                  _buildExploreTab(),
+                  const SettingsScreen(),
+                ],
               ),
-            ),
-          ],
+
+              // Bottom Navigation Bar - Fixed at bottom
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: CustomBottomNavigation(
+                  currentIndex: _currentBottomNavIndex,
+                  onTap: (index) {
+                    if (index == _currentBottomNavIndex) {
+                      if (index == 1) {
+                        // Active Explore tab tapped -> Directly check business profile & open New Post flow
+                        _handleNewPostFlow();
+                      }
+                    } else {
+                      setState(() {
+                        _currentBottomNavIndex = index;
+                      });
+                      if (index == 0) {
+                        final auth = Provider.of<AuthService>(context, listen: false);
+                        final pService = Provider.of<PostService>(context, listen: false);
+                        pService.fetchSavedPosts(
+                          authToken: auth.currentUser.authToken,
+                          userId: auth.currentUser.userId.isNotEmpty ? auth.currentUser.userId : null,
+                          userEmail: auth.currentUser.email.isNotEmpty ? auth.currentUser.email : null,
+                        );
+                      } else if (index == 1) {
+                        _loadInitialData();
+                      }
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -567,19 +601,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final isSearchActive = _isSearchFocused || _searchController.text.isNotEmpty;
 
-    return PopScope(
-      canPop: !isSearchActive,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) {
-          _searchFocusNode.unfocus();
-          _clearSearch();
-          setState(() {
-            _isSearchFocused = false;
-          });
-        }
-      },
-      child: Stack(
-        children: [
+    return Stack(
+      children: [
           // ==========================================
           // 1. CARD STACK AREA: Tinder-Style Horizontal Swipe Deck
           // ==========================================
@@ -608,6 +631,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             )
                           : TinderCardDeck(
                               posts: allPosts,
+                              totalCount: postService.totalCount,
                               onReload: _loadInitialData,
                               onMoreInfoClick: (post) {
                                 postService.trackMoreInfoClick(
@@ -666,7 +690,9 @@ class _HomeScreenState extends State<HomeScreen> {
             top: 0,
             left: 0,
             right: 0,
-            bottom: isSearchActive ? 74 : null,
+            bottom: isSearchActive
+                ? (MediaQuery.of(context).viewInsets.bottom > 0 ? MediaQuery.of(context).viewInsets.bottom : 74.0)
+                : null,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -884,8 +910,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
-      ),
-    );
+      );
   }
 
   Widget _buildSearchResultsOverlay() {

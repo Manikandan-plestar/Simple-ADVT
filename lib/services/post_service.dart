@@ -175,6 +175,7 @@ class PostItem {
 class PostService extends ChangeNotifier {
   final List<PostItem> _feedPosts = [];
   final List<PostItem> _savedPosts = [];
+  int _totalCount = 0;
   bool _isLoading = false;
 
   String get _baseUrl => ApiClient().baseUrl;
@@ -187,6 +188,14 @@ class PostService extends ChangeNotifier {
   bool get isLoading => _isLoading;
   List<PostItem> get allPosts => List.unmodifiable(_feedPosts);
   List<PostItem> get savedPosts => List.unmodifiable(_savedPosts);
+  int get totalCount => _totalCount > 0 ? _totalCount : _feedPosts.length;
+
+  /// Reset feed cache and count (e.g. when user changes location significantly)
+  void resetFeed() {
+    _feedPosts.clear();
+    _totalCount = 0;
+    notifyListeners();
+  }
 
   /// Fetch location-targeted posts for Explore feed
   Future<List<PostItem>> fetchPosts({
@@ -198,6 +207,8 @@ class PostService extends ChangeNotifier {
     String? city,
     String? state,
     String? country,
+    double? latitude,
+    double? longitude,
     String? businessId,
     String? search,
     String? postType,
@@ -221,6 +232,12 @@ class PostService extends ChangeNotifier {
       }
       if (country != null && country.isNotEmpty) {
         queryParams['country'] = country.trim();
+      }
+      if (latitude != null && latitude != 0.0) {
+        queryParams['latitude'] = latitude.toString();
+      }
+      if (longitude != null && longitude != 0.0) {
+        queryParams['longitude'] = longitude.toString();
       }
       if (businessId != null && businessId.isNotEmpty) {
         queryParams['business_id'] = businessId.trim();
@@ -248,6 +265,9 @@ class PostService extends ChangeNotifier {
           final List list = data['posts'] as List;
           final fetchedPosts = list.map((item) => PostItem.fromJson(item as Map<String, dynamic>)).toList();
 
+          final rawTotal = data['total_count'] ?? data['totalCount'] ?? data['count'] ?? fetchedPosts.length;
+          final parsedTotal = rawTotal is int ? rawTotal : (int.tryParse(rawTotal.toString()) ?? fetchedPosts.length);
+
           if (businessId != null && businessId.isNotEmpty) {
             _feedPosts.removeWhere((p) => p.businessProfileId == businessId);
             _feedPosts.addAll(fetchedPosts);
@@ -263,6 +283,7 @@ class PostService extends ChangeNotifier {
             }
             _feedPosts.clear();
             _feedPosts.addAll(fetchedPosts);
+            _totalCount = parsedTotal;
           }
         }
       }
@@ -479,7 +500,9 @@ class PostService extends ChangeNotifier {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         if (data['success'] == true && data['post'] != null) {
           final serverPost = PostItem.fromJson(data['post'] as Map<String, dynamic>);
+          _feedPosts.removeWhere((p) => p.postId == serverPost.postId);
           _feedPosts.insert(0, serverPost);
+          _totalCount += 1;
           notifyListeners();
           return serverPost;
         }
@@ -507,7 +530,9 @@ class PostService extends ChangeNotifier {
       isSaved: false,
     );
 
+    _feedPosts.removeWhere((p) => p.postId == fallbackPost.postId);
     _feedPosts.insert(0, fallbackPost);
+    _totalCount += 1;
     notifyListeners();
     return fallbackPost;
   }
@@ -634,6 +659,7 @@ class PostService extends ChangeNotifier {
 
     _feedPosts.removeWhere((p) => p.postId == postId);
     _savedPosts.removeWhere((p) => p.postId == postId);
+    if (_totalCount > 0) _totalCount -= 1;
     notifyListeners();
     return serverSuccess;
   }
