@@ -103,17 +103,35 @@ class AuthService extends ChangeNotifier {
 
   Future<File> _getSessionFile() async {
     try {
-      final sysTemp = Directory.systemTemp;
-      return File('${sysTemp.path}/simple_advt_session.json');
+      // Primary session file in current app directory
+      return File('advt_app_session.json');
     } catch (_) {
-      return File('simple_advt_session.json');
+      return File('advt_app_session.json');
     }
   }
 
-  /// Load session state upon initialization or app launch.
+  /// Load session state upon initialization or app launch with silent migration from legacy temp storage.
   Future<void> initSession() async {
     try {
-      final file = await _getSessionFile();
+      File file = await _getSessionFile();
+
+      // Silent Migration: If new file does not exist, check legacy systemTemp path
+      if (!await file.exists()) {
+        try {
+          final sysTemp = Directory.systemTemp;
+          final legacyTempFile = File('${sysTemp.path}/simple_advt_session.json');
+          if (await legacyTempFile.exists()) {
+            final legacyContent = await legacyTempFile.readAsString();
+            if (legacyContent.isNotEmpty) {
+              await file.writeAsString(legacyContent);
+              try {
+                await legacyTempFile.delete();
+              } catch (_) {}
+            }
+          }
+        } catch (_) {}
+      }
+
       if (await file.exists()) {
         final content = await file.readAsString();
         if (content.isNotEmpty) {
@@ -449,11 +467,13 @@ class AuthService extends ChangeNotifier {
   Future<void> fetchUserProfile() async {
     if (_user.email.isEmpty) return;
 
-    final url = Uri.parse('$_baseUrl/api/user-profile?email=${Uri.encodeComponent(_user.email)}');
     try {
-      final response = await http.get(url).timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = await ApiClient().get(
+        '/api/user-profile',
+        query: {'email': _user.email},
+      );
+
+      if (data is Map<String, dynamic> && data['success'] == true) {
         final userData = data['user'] as Map<String, dynamic>?;
         if (userData != null) {
           _user.userId = userData['userId'] as String? ?? _user.userId;
@@ -495,13 +515,11 @@ class AuthService extends ChangeNotifier {
 
     final cleanEmail = (email != null && email.isNotEmpty) ? email.trim().toLowerCase() : _user.email;
     final cleanName = TextUtils.capitalizeWords(name.trim());
-    final url = Uri.parse('$_baseUrl/api/update-profile');
 
     try {
-      final response = await http.put(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
+      final data = await ApiClient().put(
+        '/api/update-profile',
+        {
           'email': cleanEmail,
           'full_name': cleanName,
           'name': cleanName,
@@ -513,11 +531,10 @@ class AuthService extends ChangeNotifier {
           'country': country.trim(),
           if (latitude != null) 'latitude': latitude,
           if (longitude != null) 'longitude': longitude,
-        }),
-      ).timeout(const Duration(seconds: 12));
+        },
+      );
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      final success = response.statusCode == 200 && data['success'] == true;
+      final success = data is Map<String, dynamic> && data['success'] == true;
 
       if (success) {
         _user.name = cleanName;

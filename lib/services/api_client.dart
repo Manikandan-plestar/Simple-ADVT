@@ -61,6 +61,7 @@ class ApiClient {
     final headers = <String, String>{
       'Content-Type': 'application/json',
       'Accept': 'application/json',
+      'X-App-Version': '1.0.0',
     };
 
     if (_authToken != null && _authToken!.isNotEmpty) {
