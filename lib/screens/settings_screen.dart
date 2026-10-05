@@ -17,7 +17,7 @@ class SettingsScreen extends StatelessWidget {
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF111827)),
         ),
         content: const Text(
-          'Are you sure you want to logout from Simple ADVT? You will need to verify your email again to log in.',
+          'Are you sure you want to logout from ADVT App? You will need to verify your email again to log in.',
           style: TextStyle(fontSize: 13, color: Color(0xFF4B5563), height: 1.4),
         ),
         actions: [
@@ -209,7 +209,7 @@ class SettingsScreen extends StatelessWidget {
               child: _buildMenuItem(
                 icon: Icons.logout_rounded,
                 title: 'Logout',
-                subtitle: 'Sign out from Simple ADVT on this device',
+                subtitle: 'Sign out from ADVT App on this device',
                 iconColor: const Color(0xFFEF4444),
                 iconBg: const Color(0xFFFEF2F2),
                 titleColor: const Color(0xFFEF4444),
@@ -222,7 +222,7 @@ class SettingsScreen extends StatelessWidget {
               child: Column(
                 children: [
                   const Text(
-                    'Simple ADVT v1.0.0',
+                    'ADVT App v1.0.0',
                     style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF9CA3AF)),
                   ),
                   const SizedBox(height: 4),

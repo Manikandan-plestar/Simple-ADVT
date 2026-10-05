@@ -60,7 +60,7 @@ class _SplashScreenState extends State<SplashScreen> {
             ),
             const SizedBox(height: 20),
             const Text(
-              'Simple ADVT',
+              'ADVT App',
               style: TextStyle(
                 fontSize: 26,
                 fontWeight: FontWeight.w800,

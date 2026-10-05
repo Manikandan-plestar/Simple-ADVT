@@ -11,7 +11,7 @@ class PostItem {
   final String businessProfileId;
   final int? numericBusinessId;
   final String bizName;
-  final String type; // Always 'post' in Simple ADVT
+  final String type; // Always 'post' in ADVT App
   final String title;
   final String subtitle;
   final String description;
@@ -21,6 +21,11 @@ class PostItem {
   final DateTime createdAt;
   final String? targetLocation;
   final List<TargetLocationModel>? targetLocationItems;
+  final int durationDays;
+  final String status; // 'active', 'pending_payment', 'expired', 'cancelled'
+  final DateTime? publishedAt;
+  final DateTime? expiresAt;
+  final String? paymentId;
   bool isSaved;
   int moreInfoClickCount;
   int savedCount;
@@ -42,6 +47,11 @@ class PostItem {
     DateTime? createdAt,
     this.targetLocation,
     this.targetLocationItems,
+    this.durationDays = 1,
+    this.status = 'active',
+    this.publishedAt,
+    this.expiresAt,
+    this.paymentId,
     this.isSaved = false,
     this.moreInfoClickCount = 0,
     this.savedCount = 0,
@@ -57,10 +67,14 @@ class PostItem {
   String get displaySubtitle => TextUtils.capitalizeWords(subtitle);
   String get displayLocation => TextUtils.capitalizeWords(targetLocation ?? '');
 
+  bool get isPostActive => status == 'active' && (expiresAt == null || expiresAt!.isAfter(DateTime.now()));
+  bool get isPostExpired => status == 'expired' || (expiresAt != null && expiresAt!.isBefore(DateTime.now()));
+
   String get formattedPostTime {
-    final hour = createdAt.hour % 12 == 0 ? 12 : createdAt.hour % 12;
-    final minute = createdAt.minute.toString().padLeft(2, '0');
-    final ampm = createdAt.hour >= 12 ? 'PM' : 'AM';
+    final t = publishedAt ?? createdAt;
+    final hour = t.hour % 12 == 0 ? 12 : t.hour % 12;
+    final minute = t.minute.toString().padLeft(2, '0');
+    final ampm = t.hour >= 12 ? 'PM' : 'AM';
     return '$hour:$minute $ampm';
   }
 
@@ -123,8 +137,25 @@ class PostItem {
       } catch (_) {}
     }
 
+    DateTime? parsedPublishedAt;
+    if (json['published_at'] != null || json['publishedAt'] != null) {
+      try {
+        parsedPublishedAt = DateTime.parse((json['published_at'] ?? json['publishedAt']).toString());
+      } catch (_) {}
+    }
+
+    DateTime? parsedExpiresAt;
+    if (json['expires_at'] != null || json['expiresAt'] != null) {
+      try {
+        parsedExpiresAt = DateTime.parse((json['expires_at'] ?? json['expiresAt']).toString());
+      } catch (_) {}
+    }
+
     final parsedClicks = json['moreInfoClickCount'] ?? json['more_info_click_count'] ?? json['more_info_clicks'] ?? 0;
     final parsedSaves = json['savedCount'] ?? json['saved_count'] ?? 0;
+    final parsedDays = json['duration_days'] ?? json['durationDays'] ?? 1;
+
+    final rawStatus = json['status']?.toString() ?? (json['is_active'] == 1 || json['is_active'] == true ? 'active' : 'pending_payment');
 
     return PostItem(
       postId: formattedPostId,
@@ -142,6 +173,11 @@ class PostItem {
       createdAt: parsedCreatedAt,
       targetLocation: json['targetLocation'] ?? json['target_location'],
       targetLocationItems: targetLocItems,
+      durationDays: parsedDays is int ? parsedDays : (int.tryParse(parsedDays.toString()) ?? 1),
+      status: rawStatus,
+      publishedAt: parsedPublishedAt,
+      expiresAt: parsedExpiresAt,
+      paymentId: json['payment_id']?.toString() ?? json['paymentId']?.toString(),
       isSaved: (json['isSaved'] == true || json['is_saved'] == 1),
       moreInfoClickCount: parsedClicks is int ? parsedClicks : int.tryParse(parsedClicks.toString()) ?? 0,
       savedCount: parsedSaves is int ? parsedSaves : int.tryParse(parsedSaves.toString()) ?? 0,
@@ -165,6 +201,11 @@ class PostItem {
       'createdAt': createdAt.toIso8601String(),
       'targetLocation': targetLocation,
       'targetLocationItems': targetLocationItems?.map((e) => e.toMap()).toList(),
+      'durationDays': durationDays,
+      'status': status,
+      'publishedAt': publishedAt?.toIso8601String(),
+      'expiresAt': expiresAt?.toIso8601String(),
+      'paymentId': paymentId,
       'isSaved': isSaved,
       'moreInfoClickCount': moreInfoClickCount,
       'savedCount': savedCount,
@@ -453,13 +494,14 @@ class PostService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  /// Create and publish a new Generic Business Post
-  Future<PostItem> createPost({
+  /// Create a Pending Draft Post on Backend before initiating In-App Purchase
+  Future<PostItem> createPendingPost({
     required String businessProfileId,
     required String bizName,
     required String title,
     required String subtitle,
     required String description,
+    required int durationDays,
     List<String>? images,
     String? brandLogo,
     String? targetLocation,
@@ -480,6 +522,9 @@ class PostService extends ChangeNotifier {
       'target_locations': targetLocationItems?.map((e) => e.toMap()).toList(),
       'images': selectedImages,
       'brand_logo': brandLogo,
+      'duration_days': durationDays,
+      'is_pending': true,
+      'status': 'pending_payment',
     };
 
     final headers = <String, String>{
@@ -494,27 +539,22 @@ class PostService extends ChangeNotifier {
         Uri.parse('$_baseUrl/api/posts'),
         headers: headers,
         body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 201 || response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         if (data['success'] == true && data['post'] != null) {
-          final serverPost = PostItem.fromJson(data['post'] as Map<String, dynamic>);
-          _feedPosts.removeWhere((p) => p.postId == serverPost.postId);
-          _feedPosts.insert(0, serverPost);
-          _totalCount += 1;
-          notifyListeners();
-          return serverPost;
+          return PostItem.fromJson(data['post'] as Map<String, dynamic>);
         }
       }
     } catch (e) {
       if (kDebugMode) {
-        print('[PostService] Error publishing post to backend: $e');
+        print('[PostService] Error creating pending post on backend: $e');
       }
     }
 
-    // Fallback local post
-    final fallbackPost = PostItem(
+    // Fallback local pending post
+    return PostItem(
       postId: "P${DateTime.now().millisecondsSinceEpoch.toString().substring(7)}",
       businessProfileId: businessProfileId,
       bizName: bizName,
@@ -527,14 +567,104 @@ class PostService extends ChangeNotifier {
       brandLogo: brandLogo,
       targetLocation: targetLocation,
       targetLocationItems: targetLocationItems,
+      durationDays: durationDays,
+      status: 'pending_payment',
       isSaved: false,
     );
+  }
 
-    _feedPosts.removeWhere((p) => p.postId == fallbackPost.postId);
-    _feedPosts.insert(0, fallbackPost);
-    _totalCount += 1;
-    notifyListeners();
-    return fallbackPost;
+  /// Verify In-App Purchase with Backend and Publish Post
+  Future<PostItem?> verifyAndPublishPaidPost({
+    required String postId,
+    required String businessProfileId,
+    required int durationDays,
+    required String productId,
+    required String platform,
+    required String transactionId,
+    required String purchaseToken,
+    Map<String, dynamic>? rawPayload,
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
+    final cleanPostId = postId.replaceAll(RegExp(r'[^0-9]'), '');
+    final cleanBizId = businessProfileId.replaceAll(RegExp(r'[^0-9]'), '');
+
+    final payload = {
+      'post_id': cleanPostId.isNotEmpty ? int.parse(cleanPostId) : postId,
+      'business_id': cleanBizId.isNotEmpty ? int.parse(cleanBizId) : businessProfileId,
+      'duration_days': durationDays,
+      'product_id': productId,
+      'platform': platform,
+      'transaction_id': transactionId,
+      'purchase_token': purchaseToken,
+      if (rawPayload != null) 'raw_payload': rawPayload,
+    };
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+      if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
+      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
+    };
+
+    try {
+      final response = await http.post(
+        Uri.parse('$_baseUrl/api/payments/verify-and-activate-post'),
+        headers: headers,
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 20));
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (data['success'] == true && data['post'] != null) {
+          final activePost = PostItem.fromJson(data['post'] as Map<String, dynamic>);
+          _feedPosts.removeWhere((p) => p.postId == activePost.postId);
+          _feedPosts.insert(0, activePost);
+          _totalCount += 1;
+          notifyListeners();
+          return activePost;
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[PostService] Error verifying post payment with backend: $e');
+      }
+    }
+    return null;
+  }
+
+  /// Create and publish a generic Business Post (with default duration)
+  Future<PostItem> createPost({
+    required String businessProfileId,
+    required String bizName,
+    required String title,
+    required String subtitle,
+    required String description,
+    int durationDays = 1,
+    List<String>? images,
+    String? brandLogo,
+    String? targetLocation,
+    List<TargetLocationModel>? targetLocationItems,
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
+    return await createPendingPost(
+      businessProfileId: businessProfileId,
+      bizName: bizName,
+      title: title,
+      subtitle: subtitle,
+      description: description,
+      durationDays: durationDays,
+      images: images,
+      brandLogo: brandLogo,
+      targetLocation: targetLocation,
+      targetLocationItems: targetLocationItems,
+      authToken: authToken,
+      userId: userId,
+      userEmail: userEmail,
+    );
   }
 
   /// Update an existing Business Post

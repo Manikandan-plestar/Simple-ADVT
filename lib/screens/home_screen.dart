@@ -17,6 +17,9 @@ import 'notifications_screen.dart';
 import 'saved_items_screen.dart';
 import 'settings_screen.dart';
 import '../widgets/home/tinder_card_deck.dart';
+import '../config/post_pricing_config.dart';
+import '../services/in_app_purchase_service.dart';
+import '../widgets/business/payment_success_dialog.dart';
 
 class HomeScreen extends StatefulWidget {
   final int initialTabIndex;
@@ -339,7 +342,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         content: const Text(
-          'You need an active business profile to create and publish advertisement posts on Simple ADVT.',
+          'You need an active business profile to create and publish advertisement posts on ADVT App.',
           style: TextStyle(fontSize: 14, color: Color(0xFF4B5563), height: 1.4),
         ),
         actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -554,15 +557,35 @@ class _HomeScreenState extends State<HomeScreen> {
           required String subtitle,
           required String description,
           required String targetLocation,
+          required int durationDays,
+          required PostDurationOption durationOption,
           List<TargetLocationModel>? targetLocations,
           List<String>? images,
         }) async {
-          await postService.createPost(
+          // 1. Show processing SnackBar / dialog
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                  SizedBox(width: 12),
+                  Text('Preparing secure post payment...'),
+                ],
+              ),
+              backgroundColor: Color(0xFF4F46E5),
+              duration: Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+
+          // 2. Create pending draft post on backend
+          final pendingPost = await postService.createPendingPost(
             businessProfileId: biz.businessProfileId,
             bizName: biz.name,
             title: title,
             subtitle: subtitle,
             description: description,
+            durationDays: durationDays,
             targetLocation: targetLocation,
             targetLocationItems: targetLocations,
             images: images,
@@ -572,15 +595,46 @@ class _HomeScreenState extends State<HomeScreen> {
             userEmail: authService.currentUser.email,
           );
 
-          if (mounted) {
+          // 3. Initiate In-App Purchase via Google Play Billing / StoreKit
+          final purchaseResult = await InAppPurchaseService().buyPostSharing(
+            option: durationOption,
+            businessId: biz.businessProfileId,
+            pendingPostId: pendingPost.postId,
+            authToken: authService.currentUser.authToken ?? '',
+            userId: authService.currentUser.userId,
+            userEmail: authService.currentUser.email,
+          );
+
+          if (!mounted) return;
+
+          if (purchaseResult.success) {
+            final PostItem activePost = (purchaseResult.serverResponse != null && purchaseResult.serverResponse!['post'] != null)
+                ? PostItem.fromJson(purchaseResult.serverResponse!['post'] as Map<String, dynamic>)
+                : pendingPost;
+
+            _loadInitialData();
+
+            // 4. Show Payment Success Screen / Dialog with Business Name, Duration, Published Time, Expiry Time
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (dCtx) => PaymentSuccessDialog(
+                post: activePost,
+                transactionId: purchaseResult.transactionId,
+                onDismiss: () {
+                  _loadInitialData();
+                },
+              ),
+            );
+          } else {
+            // Payment cancelled or failed
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Post published successfully!'),
-                backgroundColor: Color(0xFF10B981),
+              SnackBar(
+                content: Text(purchaseResult.message ?? 'Payment failed or was cancelled. Post was not published.'),
+                backgroundColor: purchaseResult.isCancelled ? const Color(0xFF4B5563) : const Color(0xFFDC2626),
                 behavior: SnackBarBehavior.floating,
               ),
             );
-            _loadInitialData();
           }
         },
       ),

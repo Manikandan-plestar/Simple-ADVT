@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import '../../services/post_service.dart';
 import '../business/cycling_post_image.dart';
 
-/// Tinder-style horizontal swipe card deck for Simple ADVT Explore feed.
+/// Tinder-style horizontal swipe card deck for ADVT App Explore feed.
 /// Features:
 /// - Smooth rotation and translation on horizontal drag.
 /// - Next 1-2 cards visible underneath in stack with subtle scaling and offset.
@@ -764,7 +764,7 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
             Icon(Icons.campaign_rounded, size: 56, color: Color(0xFF818CF8)),
             SizedBox(height: 8),
             Text(
-              'Simple ADVT',
+              'ADVT App',
               style: TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.bold,

@@ -6,6 +6,9 @@ import '../services/business_service.dart';
 import '../services/post_service.dart';
 import '../widgets/business/create_post_modal.dart';
 import '../widgets/business/cycling_post_image.dart';
+import '../config/post_pricing_config.dart';
+import '../services/in_app_purchase_service.dart';
+import '../widgets/business/payment_success_dialog.dart';
 
 class BizManageScreen extends StatefulWidget {
   const BizManageScreen({super.key});
@@ -46,15 +49,34 @@ class _BizManageScreenState extends State<BizManageScreen> {
           required String subtitle,
           required String description,
           required String targetLocation,
+          required int durationDays,
+          required PostDurationOption durationOption,
           List<TargetLocationModel>? targetLocations,
           List<String>? images,
         }) async {
-          final newPost = await postService.createPost(
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Row(
+                children: [
+                  SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                  SizedBox(width: 12),
+                  Text('Preparing secure post payment...'),
+                ],
+              ),
+              backgroundColor: Color(0xFF4F46E5),
+              duration: Duration(seconds: 4),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+
+          // 1. Create pending post
+          final pendingPost = await postService.createPendingPost(
             businessProfileId: bizId,
             bizName: bizName,
             title: title,
             subtitle: subtitle,
             description: description,
+            durationDays: durationDays,
             targetLocation: targetLocation,
             targetLocationItems: targetLocations,
             images: images,
@@ -63,7 +85,46 @@ class _BizManageScreenState extends State<BizManageScreen> {
             userEmail: authService.currentUser.email,
           );
 
-          bizService.addPostToBusiness(bizId, newPost);
+          // 2. Start IAP flow
+          final purchaseResult = await InAppPurchaseService().buyPostSharing(
+            option: durationOption,
+            businessId: bizId,
+            pendingPostId: pendingPost.postId,
+            authToken: authService.currentUser.authToken ?? '',
+            userId: authService.currentUser.userId,
+            userEmail: authService.currentUser.email,
+          );
+
+          if (!mounted) return;
+
+          if (purchaseResult.success) {
+            final PostItem activePost = (purchaseResult.serverResponse != null && purchaseResult.serverResponse!['post'] != null)
+                ? PostItem.fromJson(purchaseResult.serverResponse!['post'] as Map<String, dynamic>)
+                : pendingPost;
+
+            bizService.addPostToBusiness(bizId, activePost);
+            postService.fetchPosts(businessId: bizId);
+
+            showDialog(
+              context: context,
+              barrierDismissible: false,
+              builder: (dCtx) => PaymentSuccessDialog(
+                post: activePost,
+                transactionId: purchaseResult.transactionId,
+                onDismiss: () {
+                  postService.fetchPosts(businessId: bizId);
+                },
+              ),
+            );
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(purchaseResult.message ?? 'Payment failed or was cancelled. Post was not published.'),
+                backgroundColor: purchaseResult.isCancelled ? const Color(0xFF4B5563) : const Color(0xFFDC2626),
+                behavior: SnackBarBehavior.floating,
+              ),
+            );
+          }
         },
       ),
     );

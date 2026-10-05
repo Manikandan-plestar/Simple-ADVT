@@ -8,6 +8,7 @@ import 'services/business_service.dart';
 import 'services/post_service.dart';
 import 'services/search_service.dart';
 import 'services/notification_service.dart';
+import 'services/in_app_purchase_service.dart';
 
 import 'screens/splash_screen.dart';
 import 'screens/login_screen.dart';
@@ -26,7 +27,7 @@ import 'screens/followed_screen.dart';
 import 'screens/saved_items_screen.dart';
 import 'screens/settings_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -37,11 +38,15 @@ void main() {
       systemNavigationBarIconBrightness: Brightness.dark,
     ),
   );
-  runApp(const SimpleAdvtApp());
+
+  // Initialize In-App Purchase Service
+  await InAppPurchaseService().initialize();
+
+  runApp(const AdvtApp());
 }
 
-class SimpleAdvtApp extends StatelessWidget {
-  const SimpleAdvtApp({super.key});
+class AdvtApp extends StatelessWidget {
+  const AdvtApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -61,7 +66,7 @@ class SimpleAdvtApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => NotificationService()),
       ],
       child: MaterialApp(
-        title: 'Simple ADVT',
+        title: 'ADVT App',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: true,

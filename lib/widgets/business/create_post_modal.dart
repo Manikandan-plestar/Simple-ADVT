@@ -1,11 +1,12 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../../config/post_pricing_config.dart';
 import '../../models/target_location_model.dart';
 import '../../services/device_image_picker_service.dart';
+import '../../services/in_app_purchase_service.dart';
+import '../../services/post_service.dart';
 import '../../services/target_location_service.dart';
 import 'target_location_picker_modal.dart';
-
-import '../../services/post_service.dart';
 
 class CreatePostModal extends StatefulWidget {
   final PostItem? initialPost;
@@ -16,6 +17,8 @@ class CreatePostModal extends StatefulWidget {
     required String subtitle,
     required String description,
     required String targetLocation,
+    required int durationDays,
+    required PostDurationOption durationOption,
     List<TargetLocationModel>? targetLocations,
     List<String>? images,
   }) onSubmit;
@@ -40,6 +43,7 @@ class _CreatePostModalState extends State<CreatePostModal> {
   bool _isProcessingImages = false;
 
   late List<TargetLocationModel> _selectedTargetLocations;
+  late PostDurationOption _selectedDuration;
 
   @override
   void initState() {
@@ -47,6 +51,12 @@ class _CreatePostModalState extends State<CreatePostModal> {
     _titleController = TextEditingController(text: widget.initialPost?.title ?? '');
     _descController = TextEditingController(text: widget.initialPost?.description ?? '');
     _selectedImages = widget.initialPost?.images != null ? List.from(widget.initialPost!.images) : [];
+
+    if (widget.initialPost?.durationDays != null) {
+      _selectedDuration = PostPricingConfig.findByDays(widget.initialPost!.durationDays);
+    } else {
+      _selectedDuration = PostPricingConfig.defaultOption;
+    }
 
     if (widget.initialPost?.targetLocationItems != null && widget.initialPost!.targetLocationItems!.isNotEmpty) {
       _selectedTargetLocations = List.from(widget.initialPost!.targetLocationItems!);
@@ -139,6 +149,10 @@ class _CreatePostModalState extends State<CreatePostModal> {
     }
   }
 
+  String _getPriceDisplay(PostDurationOption option) {
+    return InAppPurchaseService().getPriceForOption(option);
+  }
+
   void _handleSubmit() {
     final title = _titleController.text.trim();
     final description = _descController.text.trim();
@@ -175,11 +189,16 @@ class _CreatePostModalState extends State<CreatePostModal> {
       targetLocation: targetLocationStr,
       targetLocations: _selectedTargetLocations,
       images: _selectedImages,
+      durationDays: _selectedDuration.days,
+      durationOption: _selectedDuration,
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final isEditing = widget.initialPost != null;
+    final activePriceText = _getPriceDisplay(_selectedDuration);
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -203,13 +222,13 @@ class _CreatePostModalState extends State<CreatePostModal> {
                 Row(
                   children: [
                     Icon(
-                      widget.initialPost != null ? Icons.edit_note_rounded : Icons.post_add_rounded,
+                      isEditing ? Icons.edit_note_rounded : Icons.post_add_rounded,
                       color: const Color(0xFF4F46E5),
                       size: 22,
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      widget.modalTitle ?? (widget.initialPost != null ? 'Edit Post' : 'Create New Post'),
+                      widget.modalTitle ?? (isEditing ? 'Edit Post' : 'Create & Share Post'),
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -434,9 +453,118 @@ class _CreatePostModalState extends State<CreatePostModal> {
                       }).toList(),
                     ),
             ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 18),
 
-            // Publish Post Button
+            // 5. Number of Days (Post Duration Selection)
+            if (!isEditing) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Number of Days',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF374151)),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEEF2FF),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      'Store Price: $activePriceText',
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF4F46E5)),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+
+              // Duration Chips Grid
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: PostPricingConfig.supportedOptions.map((opt) {
+                  final isSelected = _selectedDuration.days == opt.days;
+                  final priceText = _getPriceDisplay(opt);
+
+                  return InkWell(
+                    onTap: () {
+                      setState(() {
+                        _selectedDuration = opt;
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      decoration: BoxDecoration(
+                        color: isSelected ? const Color(0xFF4F46E5) : const Color(0xFFF9FAFB),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isSelected ? const Color(0xFF4F46E5) : const Color(0xFFE5E7EB),
+                          width: isSelected ? 1.5 : 1.0,
+                        ),
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            opt.label,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: isSelected ? Colors.white : const Color(0xFF111827),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            priceText,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: isSelected ? Colors.white.withValues(alpha: 0.9) : const Color(0xFF6B7280),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 14),
+
+              // Post Duration & Amount Immediate Summary Box
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0FDF4),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFDCFCE7)),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.schedule_rounded, size: 18, color: Color(0xFF15803D)),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Post Duration: ${_selectedDuration.days} ${_selectedDuration.days == 1 ? 'Day' : 'Days'}',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF15803D)),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      'Amount: $activePriceText',
+                      style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF15803D)),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+
+            // Submit / Pay & Share Button
             SizedBox(
               width: double.infinity,
               height: 50,
@@ -448,9 +576,12 @@ class _CreatePostModalState extends State<CreatePostModal> {
                   elevation: 0,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
-                icon: Icon(widget.initialPost != null ? Icons.save_rounded : Icons.send_rounded, size: 18),
+                icon: Icon(
+                  isEditing ? Icons.save_rounded : Icons.lock_outline_rounded,
+                  size: 18,
+                ),
                 label: Text(
-                  widget.submitButtonText ?? (widget.initialPost != null ? 'Save Changes' : 'Publish Post'),
+                  widget.submitButtonText ?? (isEditing ? 'Save Changes' : 'Pay & Share Post ($activePriceText)'),
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                 ),
               ),

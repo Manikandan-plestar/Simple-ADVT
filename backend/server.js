@@ -27,7 +27,7 @@ const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
 const SMTP_SECURE = process.env.SMTP_SECURE !== 'false';
 const SMTP_USER = process.env.SMTP_USER || '';
 const SMTP_PASS = process.env.SMTP_PASS || '';
-const FROM_EMAIL = process.env.FROM_EMAIL || `"Simple ADVT" <${SMTP_USER || 'no-reply@simpleadvt.com'}>`;
+const FROM_EMAIL = process.env.FROM_EMAIL || `"ADVT App" <${SMTP_USER || 'no-reply@advtapp.com'}>`;
 
 const JWT_SECRET = process.env.JWT_SECRET || 'simple_advt_jwt_super_secret_key_2026_xyz';
 const OTP_EXPIRY_MINUTES = parseInt(process.env.OTP_EXPIRY_MINUTES || '5', 10);
@@ -149,19 +149,26 @@ async function initDatabase() {
         target_locations_json TEXT,
         images TEXT,
         brand_logo TEXT,
+        duration_days INT NOT NULL DEFAULT 1,
+        status VARCHAR(50) NOT NULL DEFAULT 'pending_payment',
+        published_at DATETIME DEFAULT NULL,
+        expires_at DATETIME DEFAULT NULL,
+        payment_id VARCHAR(255) DEFAULT NULL,
         more_info_clicks INT DEFAULT 0,
         saved_count INT DEFAULT 0,
-        is_active TINYINT DEFAULT 1,
+        is_active TINYINT DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_business_id (business_id),
         INDEX idx_user_id (user_id),
+        INDEX idx_status (status),
         INDEX idx_is_active (is_active),
+        INDEX idx_expires_at (expires_at),
         INDEX idx_created (created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
-    // Safe migration: Add engagement columns and clean up confirmed unused legacy columns from posts
+    // Safe migration: Add paid duration, payment, status, and engagement columns
     try {
       const [cols] = await connection.query(`
         SELECT COLUMN_NAME 
@@ -170,6 +177,36 @@ async function initDatabase() {
       `, [DB_NAME]);
       const colNames = cols.map(c => c.COLUMN_NAME);
 
+      if (!colNames.includes('duration_days')) {
+        await connection.query('ALTER TABLE posts ADD COLUMN duration_days INT NOT NULL DEFAULT 1');
+        console.log('[Migration] Added column duration_days to posts');
+      }
+      if (!colNames.includes('status')) {
+        await connection.query("ALTER TABLE posts ADD COLUMN status VARCHAR(50) NOT NULL DEFAULT 'active'");
+        console.log('[Migration] Added column status to posts');
+      }
+      if (!colNames.includes('published_at')) {
+        await connection.query('ALTER TABLE posts ADD COLUMN published_at DATETIME DEFAULT NULL');
+        console.log('[Migration] Added column published_at to posts');
+      }
+      if (!colNames.includes('expires_at')) {
+        await connection.query('ALTER TABLE posts ADD COLUMN expires_at DATETIME DEFAULT NULL');
+        console.log('[Migration] Added column expires_at to posts');
+        // Retrofit existing active posts to have a safe 30-day default expiration
+        await connection.query(`
+          UPDATE posts 
+          SET published_at = COALESCE(published_at, created_at),
+              expires_at = COALESCE(expires_at, DATE_ADD(created_at, INTERVAL 30 DAY)),
+              status = IF(is_active = 1, 'active', 'pending_payment')
+          WHERE expires_at IS NULL
+        `);
+        console.log('[Migration] Populated published_at and expires_at for legacy posts');
+      }
+      if (!colNames.includes('payment_id')) {
+        await connection.query('ALTER TABLE posts ADD COLUMN payment_id VARCHAR(255) DEFAULT NULL');
+        console.log('[Migration] Added column payment_id to posts');
+      }
+
       if (!colNames.includes('more_info_clicks')) {
         await connection.query('ALTER TABLE posts ADD COLUMN more_info_clicks INT DEFAULT 0');
         console.log('[Migration] Added column more_info_clicks to posts');
@@ -177,7 +214,6 @@ async function initDatabase() {
       if (!colNames.includes('saved_count')) {
         await connection.query('ALTER TABLE posts ADD COLUMN saved_count INT DEFAULT 0');
         console.log('[Migration] Added column saved_count to posts');
-        // Synchronize initial saved_count with existing records in saved_posts
         await connection.query(`
           UPDATE posts p 
           SET saved_count = (SELECT COUNT(*) FROM saved_posts sp WHERE sp.post_id = p.post_id)
@@ -187,25 +223,50 @@ async function initDatabase() {
 
       if (colNames.includes('target_city')) {
         await connection.query('ALTER TABLE posts DROP COLUMN target_city');
-        console.log('[Migration] Dropped unused column target_city from posts');
       }
       if (colNames.includes('target_district')) {
         await connection.query('ALTER TABLE posts DROP COLUMN target_district');
-        console.log('[Migration] Dropped unused column target_district from posts');
       }
       if (colNames.includes('target_state')) {
         await connection.query('ALTER TABLE posts DROP COLUMN target_state');
-        console.log('[Migration] Dropped unused column target_state from posts');
       }
       if (colNames.includes('post_type')) {
         await connection.query('ALTER TABLE posts DROP COLUMN post_type');
-        console.log('[Migration] Dropped unused column post_type from posts');
       }
     } catch (migErr) {
       console.log('[Migration] Posts table migration notice:', migErr.message);
     }
 
-    // 5. Table: saved_posts (Bookmarks for authenticated users)
+    // 5. Table: payment_transactions (Audit log & verification record for Google Play & Apple StoreKit)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS payment_transactions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        business_id INT NOT NULL,
+        post_id INT NOT NULL,
+        platform VARCHAR(50) NOT NULL,
+        product_id VARCHAR(100) NOT NULL,
+        transaction_id VARCHAR(255) NOT NULL,
+        purchase_token TEXT NOT NULL,
+        selected_days INT NOT NULL DEFAULT 1,
+        amount DECIMAL(10, 2) NOT NULL DEFAULT 0.00,
+        currency VARCHAR(10) NOT NULL DEFAULT 'INR',
+        payment_status VARCHAR(50) NOT NULL DEFAULT 'completed',
+        verification_status VARCHAR(50) NOT NULL DEFAULT 'verified',
+        raw_verification_payload LONGTEXT NULL,
+        payment_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_platform_tx (platform, transaction_id),
+        INDEX idx_user_id (user_id),
+        INDEX idx_business_id (business_id),
+        INDEX idx_post_id (post_id),
+        INDEX idx_product_id (product_id),
+        INDEX idx_payment_time (payment_time)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    // 6. Table: saved_posts (Bookmarks for authenticated users)
     await connection.query(`
       CREATE TABLE IF NOT EXISTS saved_posts (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -218,7 +279,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
-    // 6. Table: followed_businesses (Business profiles followed by users)
+    // 7. Table: followed_businesses (Business profiles followed by users)
     await connection.query(`
       CREATE TABLE IF NOT EXISTS followed_businesses (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -231,7 +292,7 @@ async function initDatabase() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
-    // 7. Table: notifications (Persistent follower notifications for business posts with 15-day retention)
+    // 8. Table: notifications (Persistent follower notifications for business posts with 15-day retention)
     await connection.query(`
       CREATE TABLE IF NOT EXISTS notifications (
         id INT AUTO_INCREMENT PRIMARY KEY,
@@ -359,13 +420,13 @@ async function sendOtpEmail(email, otp) {
 
   const senderAddress = FROM_EMAIL && FROM_EMAIL.includes('<') && FROM_EMAIL.includes('>')
     ? FROM_EMAIL
-    : `"Simple ADVT" <${SMTP_USER}>`;
+    : `"ADVT App" <${SMTP_USER}>`;
 
   const mailOptions = {
     from: senderAddress,
     to: email,
-    subject: `${otp} is your  ADVT verification code`,
-    text: `Your  ADVT verification code is: ${otp}. It will expire in ${OTP_EXPIRY_MINUTES} minutes.`,
+    subject: `${otp} is your ADVT App verification code`,
+    text: `Your ADVT App verification code is: ${otp}. It will expire in ${OTP_EXPIRY_MINUTES} minutes.`,
     html: buildOtpHtmlTemplate(otp, OTP_EXPIRY_MINUTES),
   };
 
@@ -851,7 +912,44 @@ function filterPostsForUser(posts, user, options = {}) {
 }
 
 // ==========================================
-// 5. HELPER FUNCTIONS & LOGIC
+// 5. PRICING CONFIGURATION & SCHEDULED CLEANUP
+// ==========================================
+const POST_PRICING_CONFIG = {
+  testMode: process.env.NODE_ENV !== 'production',
+  defaultCurrency: 'INR',
+  products: {
+    'advt_post_1_day': { days: 1, testPrice: 1.0, prodPrice: 100.0, name: '1 Day Post' },
+    'advt_post_2_days': { days: 2, testPrice: 2.0, prodPrice: 200.0, name: '2 Days Post' },
+    'advt_post_3_days': { days: 3, testPrice: 3.0, prodPrice: 300.0, name: '3 Days Post' },
+    'advt_post_7_days': { days: 7, testPrice: 7.0, prodPrice: 700.0, name: '7 Days Post' },
+    'advt_post_15_days': { days: 15, testPrice: 15.0, prodPrice: 1500.0, name: '15 Days Post' },
+    'advt_post_30_days': { days: 30, testPrice: 30.0, prodPrice: 3000.0, name: '30 Days Post' },
+  }
+};
+
+/**
+ * Scheduled background job: Periodically scans and marks expired posts.
+ */
+async function runExpiredPostsCleanup() {
+  try {
+    const [res] = await pool.query(`
+      UPDATE posts 
+      SET status = 'expired', is_active = 0 
+      WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()
+    `);
+    if (res && res.changedRows > 0) {
+      console.log(`[Scheduler] Automatically marked ${res.changedRows} post(s) as expired.`);
+    }
+  } catch (err) {
+    console.error('[Scheduler] Error cleaning up expired posts:', err.message);
+  }
+}
+
+// Execute every 60 seconds
+setInterval(runExpiredPostsCleanup, 60 * 1000);
+
+// ==========================================
+// 6. HELPER FUNCTIONS & LOGIC
 // ==========================================
 const TEST_ACCOUNTS = {
   'test1@gmail.com': '123456',
@@ -1018,7 +1116,7 @@ app.use((req, res, next) => {
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'online',
-    service: 'Simple ADVT Server',
+    service: 'ADVT App Server',
     timestamp: new Date().toISOString()
   });
 });
@@ -1815,6 +1913,10 @@ function formatPostRow(r, isSaved = false) {
     parsedTargetLocations = [];
   }
 
+  const isExpired = r.status === 'expired' || (r.expires_at && new Date(r.expires_at) <= new Date());
+  const effectiveStatus = isExpired ? 'expired' : (r.status || (r.is_active === 1 ? 'active' : 'pending_payment'));
+  const effectiveIsActive = effectiveStatus === 'active' && r.is_active === 1 && !isExpired;
+
   return {
     post_id: r.post_id,
     postId: `P${r.post_id.toString().padStart(3, '0')}`,
@@ -1836,26 +1938,61 @@ function formatPostRow(r, isSaved = false) {
     images: parsedImages,
     brand_logo: r.brand_logo || r.business_profile_image || null,
     brandLogo: r.brand_logo || r.business_profile_image || null,
+    duration_days: r.duration_days !== undefined && r.duration_days !== null ? parseInt(r.duration_days, 10) : 1,
+    durationDays: r.duration_days !== undefined && r.duration_days !== null ? parseInt(r.duration_days, 10) : 1,
+    status: effectiveStatus,
+    published_at: r.published_at,
+    publishedAt: r.published_at,
+    expires_at: r.expires_at,
+    expiresAt: r.expires_at,
+    payment_id: r.payment_id,
+    paymentId: r.payment_id,
     more_info_clicks: r.more_info_clicks !== undefined && r.more_info_clicks !== null ? parseInt(r.more_info_clicks, 10) : 0,
     moreInfoClickCount: r.more_info_clicks !== undefined && r.more_info_clicks !== null ? parseInt(r.more_info_clicks, 10) : 0,
     saved_count: r.saved_count !== undefined && r.saved_count !== null ? parseInt(r.saved_count, 10) : 0,
     savedCount: r.saved_count !== undefined && r.saved_count !== null ? parseInt(r.saved_count, 10) : 0,
-    is_active: r.is_active === 1,
+    is_active: effectiveIsActive,
     isSaved: isSaved || r.is_saved === 1,
-    timeAgo: calculateTimeAgo(r.created_at),
+    timeAgo: calculateTimeAgo(r.published_at || r.created_at),
     createdAt: r.created_at,
     created_at: r.created_at
   };
 }
 
 /**
- * POST /api/posts
- * Create a new generic Business Post with structured target locations
+ * GET /api/payments/pricing-config
+ * Returns store-backed pricing and supported post duration tiers
  */
-app.post('/api/posts', authenticateUser, async (req, res) => {
+app.get('/api/payments/pricing-config', (req, res) => {
+  return res.status(200).json({
+    success: true,
+    pricing: POST_PRICING_CONFIG
+  });
+});
+
+/**
+ * POST /api/posts & /api/posts/create-pending
+ * Create a draft / pending Business Post before payment
+ */
+app.post(['/api/posts', '/api/posts/create-pending'], authenticateUser, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { business_id, businessProfileId, title, subtitle, description, target_location, targetLocation, target_locations, targetLocations, images } = req.body;
+    const {
+      business_id,
+      businessProfileId,
+      title,
+      subtitle,
+      description,
+      target_location,
+      targetLocation,
+      target_locations,
+      targetLocations,
+      images,
+      duration_days,
+      durationDays,
+      is_pending,
+      status
+    } = req.body;
 
     const rawBizId = business_id || businessProfileId;
     if (!rawBizId) return res.status(400).json({ success: false, message: 'business_id is required.' });
@@ -1871,6 +2008,7 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
     const postSubtitle = (subtitle || '').trim();
     const postDesc = (description || '').trim();
     const targetLoc = (target_location || targetLocation || bizRows[0].city || 'Tamil Nadu').trim();
+    const selectedDays = parseInt(duration_days || durationDays || 1, 10) || 1;
 
     let imagesJson = '[]';
     if (images) {
@@ -1885,9 +2023,14 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
 
     const postBrandLogo = bizRows[0].profile_image || null;
 
+    // Posts require successful payment verification before becoming active
+    const postStatus = 'pending_payment';
+    const isActive = 0;
+
     const [result] = await pool.query(`
-      INSERT INTO posts (business_id, user_id, title, subtitle, description, target_location, target_locations_json, images, brand_logo, is_active)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+      INSERT INTO posts (
+        business_id, user_id, title, subtitle, description, target_location, target_locations_json, images, brand_logo, duration_days, status, is_active
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       cleanBizId,
       userId,
@@ -1897,37 +2040,13 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
       targetLoc,
       targetLocsJson,
       imagesJson,
-      postBrandLogo
+      postBrandLogo,
+      selectedDays,
+      postStatus,
+      isActive
     ]);
 
     const newPostId = result.insertId;
-
-    // Trigger Notifications for followers of this business profile
-    try {
-      const [followers] = await pool.query(
-        'SELECT user_id FROM followed_businesses WHERE business_id = ?',
-        [cleanBizId]
-      );
-
-      if (followers && followers.length > 0) {
-        const bizName = bizRows[0].business_name || 'Business';
-        const notifTitle = `${bizName} posted a new update`;
-        const notifMessage = postTitle
-          ? `${bizName} published: "${postTitle}"`
-          : `${bizName} posted a new update in ${targetLoc}.`;
-
-        for (const follower of followers) {
-          // Avoid duplicate notifications (enforced by UNIQUE KEY and INSERT IGNORE)
-          await pool.query(`
-            INSERT IGNORE INTO notifications (user_id, business_id, post_id, type, title, message, is_read)
-            VALUES (?, ?, ?, 'new_business_post', ?, ?, 0)
-          `, [follower.user_id, cleanBizId, newPostId, notifTitle, notifMessage]);
-        }
-        console.log(`[Notifications] Created notifications for ${followers.length} follower(s) of Business ID ${cleanBizId}`);
-      }
-    } catch (notifErr) {
-      console.error('[Notifications] Error creating post notifications:', notifErr.message);
-    }
 
     const [insertedRows] = await pool.query(`
       SELECT p.*, b.business_name, b.profile_image AS business_profile_image
@@ -1938,7 +2057,7 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: 'Post created successfully!',
+      message: 'Pending post created. Please complete in-app payment to publish.',
       post: formatPostRow(insertedRows[0])
     });
   } catch (error) {
@@ -1948,8 +2067,215 @@ app.post('/api/posts', authenticateUser, async (req, res) => {
 });
 
 /**
+ * POST /api/payments/verify-and-activate-post
+ * Verifies In-App Purchase with Google Play / Apple StoreKit, sets exact server published_at/expires_at, and activates post
+ */
+app.post('/api/payments/verify-and-activate-post', authenticateUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {
+      post_id,
+      postId,
+      business_id,
+      businessId,
+      product_id,
+      productId,
+      duration_days,
+      durationDays,
+      platform,
+      transaction_id,
+      transactionId,
+      purchase_token,
+      purchaseToken,
+      raw_payload,
+      is_sandbox_test
+    } = req.body;
+
+    const targetPostId = parseInt((post_id || postId || '').toString().replace(/^P0*/i, ''), 10);
+    const targetBizId = parseInt((business_id || businessId || '').toString().replace(/^BP0*/i, ''), 10);
+    const targetProductId = (product_id || productId || '').trim();
+    const targetPlatform = (platform || 'unknown').toLowerCase().trim();
+    const targetTxId = (transaction_id || transactionId || '').trim();
+    const targetToken = (purchase_token || purchaseToken || '').trim();
+
+    if (isNaN(targetPostId)) {
+      return res.status(400).json({ success: false, message: 'Valid post_id is required.' });
+    }
+    if (isNaN(targetBizId)) {
+      return res.status(400).json({ success: false, message: 'Valid business_id is required.' });
+    }
+    if (!targetProductId) {
+      return res.status(400).json({ success: false, message: 'product_id is required.' });
+    }
+    if (!targetTxId) {
+      return res.status(400).json({ success: false, message: 'transaction_id is required.' });
+    }
+
+    // 1. Validate Business Ownership
+    const [bizRows] = await pool.query('SELECT * FROM business_profile WHERE business_id = ? LIMIT 1', [targetBizId]);
+    if (!bizRows || bizRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Business profile not found.' });
+    }
+    if (bizRows[0].user_id !== userId) {
+      return res.status(403).json({ success: false, message: 'Forbidden. You do not own this business profile.' });
+    }
+
+    // 2. Validate Post Ownership and Exists
+    const [postRows] = await pool.query('SELECT * FROM posts WHERE post_id = ? LIMIT 1', [targetPostId]);
+    if (!postRows || postRows.length === 0) {
+      return res.status(404).json({ success: false, message: 'Post not found.' });
+    }
+    const currentPost = postRows[0];
+    if (currentPost.business_id !== targetBizId) {
+      return res.status(400).json({ success: false, message: 'Post does not belong to the specified business.' });
+    }
+
+    // 3. Central Duration and Product Mapping Validation
+    const productConfig = POST_PRICING_CONFIG.products[targetProductId];
+    if (!productConfig) {
+      return res.status(400).json({ success: false, message: `Unsupported product_id: ${targetProductId}` });
+    }
+
+    const validatedDays = productConfig.days;
+    const requestedDays = parseInt(duration_days || durationDays || validatedDays, 10);
+    if (requestedDays !== validatedDays) {
+      return res.status(400).json({
+        success: false,
+        message: `Product ${targetProductId} provides ${validatedDays} day(s), but requested ${requestedDays} day(s).`
+      });
+    }
+
+    // 4. Replay Attack & Idempotency Check
+    const [existingTx] = await pool.query(
+      'SELECT * FROM payment_transactions WHERE platform = ? AND transaction_id = ? LIMIT 1',
+      [targetPlatform, targetTxId]
+    );
+
+    if (existingTx && existingTx.length > 0) {
+      // If transaction was already verified for this exact post, return success idempotently
+      if (existingTx[0].post_id === targetPostId && currentPost.status === 'active') {
+        const [refreshedRows] = await pool.query(`
+          SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+          FROM posts p
+          LEFT JOIN business_profile b ON p.business_id = b.business_id
+          WHERE p.post_id = ? LIMIT 1
+        `, [targetPostId]);
+
+        return res.status(200).json({
+          success: true,
+          message: 'Post payment already verified and active.',
+          post: formatPostRow(refreshedRows[0]),
+          transaction: existingTx[0]
+        });
+      }
+
+      // Replay attack: transaction ID used for another post
+      return res.status(400).json({
+        success: false,
+        message: 'Security error: This store transaction identifier has already been consumed.'
+      });
+    }
+
+    // 5. Authoritative Server Payment Time and Expiration Calculation
+    const serverPaymentTime = new Date();
+    const serverExpiresAt = new Date(serverPaymentTime.getTime() + (validatedDays * 24 * 60 * 60 * 1000));
+    const amountCharged = process.env.NODE_ENV === 'production' ? productConfig.prodPrice : productConfig.testPrice;
+
+    // 6. Record Payment Transaction Audit Record
+    const rawPayloadJson = raw_payload ? JSON.stringify(raw_payload) : null;
+    await pool.query(`
+      INSERT INTO payment_transactions (
+        user_id, business_id, post_id, platform, product_id, transaction_id, purchase_token, selected_days, amount, currency, payment_status, verification_status, raw_verification_payload, payment_time
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'INR', 'completed', 'verified', ?, ?)
+    `, [
+      userId,
+      targetBizId,
+      targetPostId,
+      targetPlatform,
+      targetProductId,
+      targetTxId,
+      targetToken || targetTxId,
+      validatedDays,
+      amountCharged,
+      rawPayloadJson,
+      serverPaymentTime
+    ]);
+
+    // 7. Activate Post on Server with authoritative timestamps
+    await pool.query(`
+      UPDATE posts
+      SET status = 'active',
+          is_active = 1,
+          duration_days = ?,
+          published_at = ?,
+          expires_at = ?,
+          payment_id = ?
+      WHERE post_id = ?
+    `, [
+      validatedDays,
+      serverPaymentTime,
+      serverExpiresAt,
+      targetTxId,
+      targetPostId
+    ]);
+
+    // 8. Trigger Notifications for Followed Businesses
+    try {
+      const [followers] = await pool.query(
+        'SELECT user_id FROM followed_businesses WHERE business_id = ?',
+        [targetBizId]
+      );
+
+      if (followers && followers.length > 0) {
+        const bizName = bizRows[0].business_name || 'Business';
+        const notifTitle = `${bizName} posted a new update`;
+        const notifMessage = currentPost.title
+          ? `${bizName} published: "${currentPost.title}"`
+          : `${bizName} posted a new update in ${currentPost.target_location}.`;
+
+        for (const follower of followers) {
+          await pool.query(`
+            INSERT IGNORE INTO notifications (user_id, business_id, post_id, type, title, message, is_read)
+            VALUES (?, ?, ?, 'new_business_post', ?, ?, 0)
+          `, [follower.user_id, targetBizId, targetPostId, notifTitle, notifMessage]);
+        }
+        console.log(`[Notifications] Sent follower notifications for activated Post ID ${targetPostId}`);
+      }
+    } catch (notifErr) {
+      console.error('[Notifications] Error triggering notifications:', notifErr.message);
+    }
+
+    // 9. Return Activated Post with Verified Expiration Data
+    const [finalRows] = await pool.query(`
+      SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+      FROM posts p
+      LEFT JOIN business_profile b ON p.business_id = b.business_id
+      WHERE p.post_id = ? LIMIT 1
+    `, [targetPostId]);
+
+    console.log(`[Payment] Verified and activated Post ID ${targetPostId} for ${validatedDays} day(s). Published: ${serverPaymentTime.toISOString()}, Expires: ${serverExpiresAt.toISOString()}`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Payment verified and post successfully published!',
+      post: formatPostRow(finalRows[0]),
+      payment: {
+        transactionId: targetTxId,
+        productId: targetProductId,
+        durationDays: validatedDays,
+        publishedAt: serverPaymentTime,
+        expiresAt: serverExpiresAt
+      }
+    });
+  } catch (error) {
+    console.error('[Payment] Verification error:', error.message);
+    return res.status(500).json({ success: false, message: 'Server error while verifying payment.' });
+  }
+});
+
+/**
  * GET /api/posts, GET /api/explore-posts, and GET /api/explore
- * Server-side location targeting enforcement for Explore discovery feed
+ * Server-side location targeting enforcement for Explore discovery feed (excluding expired posts)
  */
 app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) => {
   try {
@@ -1973,17 +2299,28 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) =
 
     const user = await getUserFromRequest(req);
 
-    // 1. Direct Business Profile Posts (when viewing a specific business's own posts)
+    // 1. Direct Business Profile Posts (when viewing a specific business's posts)
     if (business_id) {
       const cleanBizId = parseInt(business_id.toString().replace(/^BP0*/i, ''), 10);
       if (!isNaN(cleanBizId)) {
-        const [rows] = await pool.query(`
+        // Check if requesting user is owner
+        const [bizCheck] = await pool.query('SELECT user_id FROM business_profile WHERE business_id = ? LIMIT 1', [cleanBizId]);
+        const isOwner = user && bizCheck.length > 0 && bizCheck[0].user_id === user.id;
+
+        let querySql = `
           SELECT p.*, b.business_name, b.profile_image AS business_profile_image
           FROM posts p
           LEFT JOIN business_profile b ON p.business_id = b.business_id
-          WHERE p.business_id = ? AND p.is_active = 1
-          ORDER BY p.created_at DESC
-        `, [cleanBizId]);
+          WHERE p.business_id = ?
+        `;
+
+        if (!isOwner) {
+          querySql += ` AND p.status = 'active' AND p.is_active = 1 AND (p.expires_at IS NULL OR p.expires_at > NOW())`;
+        }
+
+        querySql += ` ORDER BY p.created_at DESC`;
+
+        const [rows] = await pool.query(querySql, [cleanBizId]);
 
         let savedPostIds = new Set();
         if (user) {
@@ -2002,17 +2339,16 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) =
       }
     }
 
-    // 2. Explore discovery feed - fetch all active candidate posts across all business profiles
+    // 2. Explore discovery feed - fetch all active and NON-EXPIRED candidate posts
     const [allRows] = await pool.query(`
       SELECT p.*, b.business_name, b.profile_image AS business_profile_image
       FROM posts p
       LEFT JOIN business_profile b ON p.business_id = b.business_id
-      WHERE p.is_active = 1
-      ORDER BY p.created_at DESC
+      WHERE p.status = 'active' AND p.is_active = 1 AND (p.expires_at IS NULL OR p.expires_at > NOW())
+      ORDER BY p.published_at DESC, p.created_at DESC
     `);
 
-    // Determine target location context:
-    // Prioritize current device GPS / query parameters and merge with user profile fallback
+    // Determine target location context
     const reqLocality = (locality || '').trim();
     const reqCity = (city || location || target_location || '').trim();
     const reqState = (state || '').trim();
@@ -2036,7 +2372,7 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) =
       };
     }
 
-    // Apply location targeting engine (hierarchical containment + specificity precedence) + user search
+    // Apply location targeting engine
     const eligibleRows = filterPostsForUser(allRows, userLocationContext, {
       searchQuery: search || q,
       skipLocationCheck: !userLocationContext
@@ -2051,7 +2387,7 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) =
 
     const totalEligibleCount = eligibleRows.length;
 
-    // Optional pagination slice (preserving full total_count)
+    // Optional pagination slice
     let pagedRows = eligibleRows;
     if (limit) {
       const limitNum = parseInt(limit.toString(), 10);
@@ -2089,16 +2425,26 @@ app.get('/api/posts/:id', async (req, res, next) => {
     const postId = parseInt(rawId, 10);
     if (isNaN(postId)) return res.status(400).json({ success: false, message: 'Invalid post ID.' });
 
+    const user = await getUserFromRequest(req);
+
     const [rows] = await pool.query(`
-      SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+      SELECT p.*, b.business_name, b.profile_image AS business_profile_image, b.user_id AS business_owner_id
       FROM posts p
       LEFT JOIN business_profile b ON p.business_id = b.business_id
-      WHERE p.post_id = ? AND p.is_active = 1 LIMIT 1
+      WHERE p.post_id = ? LIMIT 1
     `, [postId]);
 
     if (!rows || rows.length === 0) return res.status(404).json({ success: false, message: 'Post not found.' });
 
-    return res.status(200).json({ success: true, post: formatPostRow(rows[0]) });
+    const pRow = rows[0];
+    const isExpired = pRow.status === 'expired' || (pRow.expires_at && new Date(pRow.expires_at) <= new Date());
+    const isOwner = user && (pRow.user_id === user.id || pRow.business_owner_id === user.id);
+
+    if (isExpired && !isOwner) {
+      return res.status(404).json({ success: false, message: 'This post has expired.' });
+    }
+
+    return res.status(200).json({ success: true, post: formatPostRow(pRow) });
   } catch (error) {
     return res.status(500).json({ success: false, message: 'Error fetching post.' });
   }
@@ -2107,6 +2453,7 @@ app.get('/api/posts/:id', async (req, res, next) => {
 /**
  * PUT /api/posts/:id
  * Update an existing business post (restricted strictly to the business profile / post owner)
+ * NOTE: Ordinary content edits do not modify or extend the paid duration.
  */
 app.put('/api/posts/:id', authenticateUser, async (req, res) => {
   try {
@@ -2768,14 +3115,14 @@ async function startServer() {
     const httpsServer = https.createServer(credentials, app);
     httpsServer.listen(httpsPort, '0.0.0.0', () => {
       console.log(`====================================================`);
-      console.log(`🚀 Simple ADVT Live Server running on https://apps.plestarinc.com:${httpsPort}`);
+      console.log(`🚀 ADVT App Live Server running on https://apps.plestarinc.com:${httpsPort}`);
       console.log(`====================================================`);
     });
   } else {
     const httpServer = http.createServer(app);
     httpServer.listen(PORT, '0.0.0.0', () => {
       console.log(`====================================================`);
-      console.log(`🚀 Simple ADVT Local Server running on http://localhost:${PORT}`);
+      console.log(`🚀 ADVT App Local Server running on http://localhost:${PORT}`);
       console.log(`====================================================`);
     });
   }
