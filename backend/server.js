@@ -2366,9 +2366,9 @@ app.post('/api/payments/verify-and-activate-post', authenticateUser, async (req,
 
 /**
  * GET /api/posts, GET /api/explore-posts, and GET /api/explore
- * Server-side location targeting enforcement for Explore discovery feed (excluding expired posts)
+ * Server-side location targeting enforcement for Explore discovery feed (Protected with JWT authentication)
  */
-app.get(['/api/posts', '/api/explore-posts', '/api/explore'], async (req, res) => {
+app.get(['/api/posts', '/api/explore-posts', '/api/explore'], authenticateUser, async (req, res) => {
   try {
     const {
       business_id,

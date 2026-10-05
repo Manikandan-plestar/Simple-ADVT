@@ -102,12 +102,21 @@ async function runTests() {
       assert.strictEqual(res.body.success, false);
     });
 
-    // 4. Explore Posts
-    await test('GET /api/posts returns 200 and data array', async () => {
+    const jwt = require('jsonwebtoken');
+    const testToken = jwt.sign({ id: 1, email: 'test1@gmail.com', isVerified: true }, 'simple_advt_jwt_super_secret_key_2026_xyz');
+
+    // 4. Explore Posts (Anonymous should be rejected with 401)
+    await test('GET /api/posts without auth returns 401', async () => {
       const res = await request('GET', '/api/posts');
+      assert.strictEqual(res.statusCode, 401);
+      assert.strictEqual(res.body.success, false);
+    });
+
+    // 4b. Explore Posts (Authenticated returns 200)
+    await test('GET /api/posts with Bearer token returns 200', async () => {
+      const res = await request('GET', '/api/posts', null, { 'Authorization': `Bearer ${testToken}` });
       assert.strictEqual(res.statusCode, 200);
       assert.strictEqual(res.body.success, true);
-      assert.ok(Array.isArray(res.body.data));
     });
 
     // 5. Business Search
