@@ -92,12 +92,29 @@ async function initDatabase() {
         otp VARCHAR(6) NOT NULL,
         expires_at DATETIME NOT NULL,
         is_used TINYINT DEFAULT 0,
+        attempts INT DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_email (email),
         INDEX idx_expires (expires_at),
         INDEX idx_created (created_at)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
+
+    // Safe migration: Add attempts column to email_otp if missing
+    try {
+      const [otpCols] = await connection.query(`
+        SELECT COLUMN_NAME 
+        FROM INFORMATION_SCHEMA.COLUMNS 
+        WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'email_otp'
+      `, [DB_NAME]);
+      const otpColNames = otpCols.map(c => c.COLUMN_NAME);
+      if (!otpColNames.includes('attempts')) {
+        await connection.query('ALTER TABLE email_otp ADD COLUMN attempts INT DEFAULT 0');
+        console.log('[Migration] Added column attempts to email_otp');
+      }
+    } catch (otpMigErr) {
+      console.log('[Migration] email_otp migration notice:', otpMigErr.message);
+    }
 
     // 2. Table: users (One Email = One User Account)
     await connection.query(`
@@ -1114,8 +1131,21 @@ async function processAndSendOtp(email) {
 // ==========================================
 const app = express();
 
+// Disable x-powered-by header to prevent server fingerprinting
+app.disable('x-powered-by');
+
 // Trust reverse proxy for Google Cloud / Nginx HTTPS termination
 app.set('trust proxy', 1);
+
+// Security Headers Middleware
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -1230,7 +1260,14 @@ app.post(['/api/verify-email-otp', '/api/verify-otp'], async (req, res) => {
         return res.status(400).json({ success: false, message: 'OTP expired. Please resend the OTP.' });
       }
 
+      if ((record.attempts || 0) >= 5) {
+        await pool.query(`UPDATE email_otp SET is_used = 1 WHERE id = ?`, [record.id]);
+        return res.status(400).json({ success: false, message: 'Too many failed attempts. Please request a new OTP.' });
+      }
+
       if (record.otp !== cleanOtp) {
+        const nextAttempts = (record.attempts || 0) + 1;
+        await pool.query(`UPDATE email_otp SET attempts = ?, is_used = IF(? >= 5, 1, 0) WHERE id = ?`, [nextAttempts, nextAttempts, record.id]);
         return res.status(400).json({ success: false, message: 'Wrong OTP' });
       }
 

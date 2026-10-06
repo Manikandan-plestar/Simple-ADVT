@@ -6,8 +6,8 @@ import 'package:http/http.dart' as http;
 /// Live Backend Base URL
 /// (Switch or change this URL when working locally vs on live server)
 // const String _apiBase = 'https://advtapp.com';
-// const String _apiBase = 'https://apps.plestarinc.com:3009';
-const String _apiBase = 'http://10.0.2.2:5000'; // Android Emulator Local
+const String _apiBase = 'https://apps.plestarinc.com:3009';
+// const String _apiBase = 'http://10.0.2.2:5000';Z // Android Emulator Local
 // const String _apiBase = 'http://localhost:5000'; // iOS Simulator / Web Local
 
 class ApiClient {
