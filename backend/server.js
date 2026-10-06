@@ -1076,6 +1076,37 @@ function extractAddressComponents(fullAddress, existingLocality = '', existingCi
   };
 }
 
+// In-memory sliding window IP rate limiting map
+const ipRateLimitMap = new Map();
+
+function checkIpRateLimit(ip, maxRequests = 10, windowMinutes = 10) {
+  const cleanIp = (ip || 'unknown').toString();
+  if (cleanIp === '127.0.0.1' || cleanIp === '::1' || cleanIp === 'localhost') {
+    return { isLimited: false, count: 0 };
+  }
+  const now = Date.now();
+  const windowMs = windowMinutes * 60 * 1000;
+  const history = ipRateLimitMap.get(cleanIp) || [];
+  const validHistory = history.filter(ts => now - ts < windowMs);
+
+  if (validHistory.length >= maxRequests) {
+    return { isLimited: true, count: validHistory.length };
+  }
+
+  validHistory.push(now);
+  ipRateLimitMap.set(cleanIp, validHistory);
+
+  if (ipRateLimitMap.size > 5000) {
+    for (const [k, timestamps] of ipRateLimitMap.entries()) {
+      if (timestamps.every(ts => now - ts >= windowMs)) {
+        ipRateLimitMap.delete(k);
+      }
+    }
+  }
+
+  return { isLimited: false, count: validHistory.length };
+}
+
 async function checkRateLimit(email) {
   const windowStart = new Date(Date.now() - RATE_LIMIT_WINDOW_MIN * 60 * 1000);
   const [rows] = await pool.query(
@@ -1089,12 +1120,22 @@ async function checkRateLimit(email) {
   };
 }
 
-async function processAndSendOtp(email) {
+async function processAndSendOtp(email, clientIp = '') {
   const cleanEmail = email.trim().toLowerCase();
 
   if (isTestAccount(cleanEmail)) {
     console.log(`[Auth] Test account: ${cleanEmail}. Skipping email dispatch (Fixed OTP: 123456).`);
     return { email: cleanEmail, expiresInSeconds: OTP_EXPIRY_MINUTES * 60 };
+  }
+
+  // Check IP rate limit
+  if (clientIp) {
+    const ipStatus = checkIpRateLimit(`otp_send_${clientIp}`, 10, RATE_LIMIT_WINDOW_MIN);
+    if (ipStatus.isLimited) {
+      const error = new Error(`Too many OTP requests from this network. Please wait ${RATE_LIMIT_WINDOW_MIN} minutes.`);
+      error.statusCode = 429;
+      throw error;
+    }
   }
 
   const rateStatus = await checkRateLimit(cleanEmail);
@@ -1152,7 +1193,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 app.use((req, res, next) => {
-  console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${req.url}`);
+  // Sanitize logged path to prevent logging sensitive query parameters like emails
+  const sanitizedPath = req.path || '/';
+  console.log(`[${new Date().toLocaleTimeString()}] ${req.method} ${sanitizedPath}`);
   next();
 });
 
@@ -1185,7 +1228,7 @@ app.post(['/api/send-email-otp', '/api/send-otp'], async (req, res) => {
       return res.status(400).json({ success: false, message: 'A valid email address is required.' });
     }
 
-    const data = await processAndSendOtp(email);
+    const data = await processAndSendOtp(email, req.ip);
     return res.status(200).json({
       success: true,
       message: `Verification code sent to ${data.email}.`,
@@ -1207,7 +1250,7 @@ app.post(['/api/resend-email-otp', '/api/resend-otp'], async (req, res) => {
       return res.status(400).json({ success: false, message: 'A valid email address is required.' });
     }
 
-    const data = await processAndSendOtp(email);
+    const data = await processAndSendOtp(email, req.ip);
     return res.status(200).json({
       success: true,
       message: `A new verification code was sent to ${data.email}.`,
@@ -1224,6 +1267,11 @@ app.post(['/api/resend-email-otp', '/api/resend-otp'], async (req, res) => {
  */
 app.post(['/api/verify-email-otp', '/api/verify-otp'], async (req, res) => {
   try {
+    const ipStatus = checkIpRateLimit(`otp_verify_${req.ip}`, 20, RATE_LIMIT_WINDOW_MIN);
+    if (ipStatus.isLimited) {
+      return res.status(429).json({ success: false, message: 'Too many verification attempts from this network. Please wait a few minutes.' });
+    }
+
     const { email, otp } = req.body;
     if (!email || !isValidEmailFormat(email)) {
       return res.status(400).json({ success: false, message: 'A valid email address is required.' });
