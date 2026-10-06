@@ -2,10 +2,9 @@
 .env
 *.env
 .env.*
-backend/.env
-backend/*.env
-!.env.example
-!backend/.env.example
+.env*
+*.env*
+backend/.env*
 
 # Node dependencies
 node_modules/
