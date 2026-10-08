@@ -6,6 +6,7 @@ import '../../services/device_image_picker_service.dart';
 import '../../services/in_app_purchase_service.dart';
 import '../../services/post_service.dart';
 import '../../services/target_location_service.dart';
+import 'card_ratio_crop_modal.dart';
 import 'target_location_picker_modal.dart';
 
 class CreatePostModal extends StatefulWidget {
@@ -85,9 +86,19 @@ class _CreatePostModalState extends State<CreatePostModal> {
       final result = await DeviceImagePickerService.pickSingleImage();
 
       if (result != null && result.isNotEmpty && mounted) {
-        setState(() {
-          _selectedImages = [result];
-        });
+        // Open Interactive Card Ratio Crop / Framing Modal
+        final croppedResult = await Navigator.push<String?>(
+          context,
+          MaterialPageRoute(
+            builder: (_) => CardRatioCropModal(imagePath: result),
+          ),
+        );
+
+        if (croppedResult != null && croppedResult.isNotEmpty && mounted) {
+          setState(() {
+            _selectedImages = [croppedResult];
+          });
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -99,6 +110,22 @@ class _CreatePostModalState extends State<CreatePostModal> {
       if (mounted) {
         setState(() => _isProcessingImages = false);
       }
+    }
+  }
+
+  Future<void> _adjustSelectedImageCrop() async {
+    if (_selectedImages.isEmpty) return;
+    final croppedResult = await Navigator.push<String?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CardRatioCropModal(imagePath: _selectedImages.first),
+      ),
+    );
+
+    if (croppedResult != null && croppedResult.isNotEmpty && mounted) {
+      setState(() {
+        _selectedImages = [croppedResult];
+      });
     }
   }
 
@@ -335,6 +362,33 @@ class _CreatePostModalState extends State<CreatePostModal> {
                         ),
                       ),
                     ),
+                    // Bottom Left: Adjust / Fit Photo Button
+                    Positioned(
+                      bottom: 8,
+                      left: 8,
+                      child: GestureDetector(
+                        onTap: _adjustSelectedImageCrop,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4F46E5).withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.crop_rotate_rounded, color: Colors.white, size: 13),
+                              SizedBox(width: 4),
+                              Text(
+                                'Fit & Crop',
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                     // Bottom Right: Change Photo Button
                     Positioned(
                       bottom: 8,
@@ -351,10 +405,10 @@ class _CreatePostModalState extends State<CreatePostModal> {
                           child: const Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(Icons.edit_rounded, color: Colors.white, size: 13),
+                              Icon(Icons.photo_library_rounded, color: Colors.white, size: 13),
                               SizedBox(width: 4),
                               Text(
-                                'Change Photo',
+                                'Change',
                                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
                               ),
                             ],

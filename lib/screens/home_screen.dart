@@ -12,6 +12,7 @@ import '../widgets/common/empty_state.dart';
 import '../widgets/business/create_post_modal.dart';
 import '../widgets/home/business_card.dart';
 import '../widgets/skeleton/skeleton_business_card.dart';
+import '../widgets/skeleton/skeleton_tinder_deck.dart';
 import '../utils/text_utils.dart';
 import 'notifications_screen.dart';
 import 'saved_items_screen.dart';
@@ -36,6 +37,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _searchFocusNode = FocusNode();
   Timer? _searchDebounceTimer;
   bool _isInitialLoaded = false;
+  bool _isFeedLoading = true;
   bool _isSearchOpen = false;
   String _searchQuery = '';
   bool _isSearchFocused = false;
@@ -141,52 +143,61 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadInitialData() async {
+    setState(() => _isFeedLoading = true);
     final authService = Provider.of<AuthService>(context, listen: false);
     final postService = Provider.of<PostService>(context, listen: false);
     final bizService = Provider.of<BusinessService>(context, listen: false);
 
     final user = authService.currentUser;
 
-    // 1. Fetch saved posts and followed businesses from database
-    await Future.wait([
-      postService.fetchSavedPosts(
-        authToken: user.authToken,
-        userId: user.userId.isNotEmpty ? user.userId : null,
-        userEmail: user.email.isNotEmpty ? user.email : null,
-      ),
-      bizService.fetchFollowedBusinesses(
-        userId: user.userId.isNotEmpty ? user.userId : null,
-        authToken: user.authToken,
-        userEmail: user.email.isNotEmpty ? user.email : null,
-      ),
-    ]);
+    try {
+      // 1. Fetch saved posts and followed businesses from database
+      await Future.wait([
+        postService.fetchSavedPosts(
+          authToken: user.authToken,
+          userId: user.userId.isNotEmpty ? user.userId : null,
+          userEmail: user.email.isNotEmpty ? user.email : null,
+        ),
+        bizService.fetchFollowedBusinesses(
+          userId: user.userId.isNotEmpty ? user.userId : null,
+          authToken: user.authToken,
+          userEmail: user.email.isNotEmpty ? user.email : null,
+        ),
+      ]);
 
-    // 2. Fetch posts targeted for the user's current / registered location
-    await postService.fetchPosts(
-      authToken: user.authToken,
-      userId: user.userId,
-      userEmail: user.email,
-      location: user.city.isNotEmpty ? user.city : (user.locality.isNotEmpty ? user.locality : user.state),
-      locality: user.locality,
-      city: user.city,
-      state: user.state,
-      country: user.country,
-      latitude: user.latitude,
-      longitude: user.longitude,
-    );
-
-    if (user.userId.isNotEmpty) {
-      await bizService.fetchUserBusinesses(
-        userId: user.userId,
-        authToken: user.authToken,
-        userEmail: user.email,
-      );
-      final notifService = Provider.of<NotificationService>(context, listen: false);
-      await notifService.fetchNotifications(
+      // 2. Fetch posts targeted for the user's current / registered location
+      await postService.fetchPosts(
         authToken: user.authToken,
         userId: user.userId,
         userEmail: user.email,
+        location: user.city.isNotEmpty ? user.city : (user.locality.isNotEmpty ? user.locality : user.state),
+        locality: user.locality,
+        city: user.city,
+        state: user.state,
+        country: user.country,
+        latitude: user.latitude,
+        longitude: user.longitude,
       );
+
+      if (user.userId.isNotEmpty) {
+        await bizService.fetchUserBusinesses(
+          userId: user.userId,
+          authToken: user.authToken,
+          userEmail: user.email,
+        );
+        final notifService = Provider.of<NotificationService>(context, listen: false);
+        await notifService.fetchNotifications(
+          authToken: user.authToken,
+          userId: user.userId,
+          userEmail: user.email,
+        );
+      }
+    } catch (e) {
+      debugPrint('[HomeScreen] Error loading initial data: $e');
+    } finally {
+      if (mounted) {
+        setState(() => _isFeedLoading = false);
+      }
     }
   }
 
@@ -691,10 +702,8 @@ class _HomeScreenState extends State<HomeScreen> {
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.only(bottom: 74), // Spacing above scooped bottom nav
-                child: isLoading && allPosts.isEmpty
-                    ? const Center(
-                        child: CircularProgressIndicator(color: Color(0xFF4F46E5)),
-                      )
+                child: (_isFeedLoading || (isLoading && allPosts.isEmpty))
+                    ? const SkeletonTinderDeck()
                     : allPosts.isEmpty
                         ? Center(
                             child: Padding(
