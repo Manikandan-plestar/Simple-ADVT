@@ -60,12 +60,12 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
         if (_isAnimatingOffscreen) {
           setState(() {
             if (_swipingNext) {
-              if (_currentIndex + 1 < widget.posts.length) {
-                _currentIndex++;
+              if (widget.posts.isNotEmpty) {
+                _currentIndex = (_currentIndex + 1) % widget.posts.length;
               }
             } else {
-              if (_currentIndex > 0) {
-                _currentIndex--;
+              if (widget.posts.isNotEmpty) {
+                _currentIndex = (_currentIndex - 1 + widget.posts.length) % widget.posts.length;
               }
             }
             _dragOffset = Offset.zero;
@@ -114,15 +114,15 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
     final vx = details.velocity.pixelsPerSecond.dx;
 
     if (_dragOffset.dx < -threshold || vx < -500) {
-      // Swiped Right -> Left (dragged left): Show NEXT Post
-      if (_currentIndex + 1 < widget.posts.length) {
+      // Swiped Right -> Left (dragged left): Show NEXT Post (Loops to 1st after last)
+      if (widget.posts.length > 1) {
         _animateSwipe(const Offset(-650, 0), -0.35, isNext: true);
       } else {
         _animateBackToCenter();
       }
     } else if (_dragOffset.dx > threshold || vx > 500) {
-      // Swiped Left -> Right (dragged right): Show PREVIOUS Post
-      if (_currentIndex > 0) {
+      // Swiped Left -> Right (dragged right): Show PREVIOUS Post (Loops to last if at 1st)
+      if (widget.posts.length > 1) {
         _animateSwipe(const Offset(650, 0), 0.35, isNext: false);
       } else {
         _animateBackToCenter();
@@ -164,15 +164,11 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
   }
 
   void _swipeManual(bool isNext) {
-    if (_animController.isAnimating || widget.posts.isEmpty) return;
+    if (_animController.isAnimating || widget.posts.length <= 1) return;
     if (isNext) {
-      if (_currentIndex + 1 < widget.posts.length) {
-        _animateSwipe(const Offset(-650, 0), -0.3, isNext: true);
-      }
+      _animateSwipe(const Offset(-650, 0), -0.3, isNext: true);
     } else {
-      if (_currentIndex > 0) {
-        _animateSwipe(const Offset(650, 0), 0.3, isNext: false);
-      }
+      _animateSwipe(const Offset(650, 0), 0.3, isNext: false);
     }
   }
 
@@ -277,106 +273,53 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
         ? widget.totalCount!
         : postCount;
 
-    final safeIndex = _currentIndex.clamp(0, postCount > 0 ? postCount - 1 : 0);
+    final safeIndex = _currentIndex % postCount;
     final topPost = widget.posts[safeIndex];
 
-    final hasNext = safeIndex + 1 < postCount;
-    final hasThird = safeIndex + 2 < postCount;
-
-    final secondPost = hasNext ? widget.posts[safeIndex + 1] : null;
-    final thirdPost = hasThird ? widget.posts[safeIndex + 2] : null;
+    final nextIndex = (safeIndex + 1) % postCount;
+    final secondPost = postCount > 1 ? widget.posts[nextIndex] : null;
 
     final topCardIndex = safeIndex + 1;
-    final secondCardIndex = safeIndex + 2;
-    final thirdCardIndex = safeIndex + 3;
+    final secondCardIndex = nextIndex + 1;
 
     // Dynamic drag progress (0.0 to 1.0)
     final dragFraction = (_dragOffset.dx.abs() / 240.0).clamp(0.0, 1.0);
 
     return Column(
       children: [
-        // Main Swipeable Card Deck Stack
+        // Main Swipeable Card Stack (Normal Centered View)
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final availableWidth = constraints.maxWidth;
-                final availableHeight = constraints.maxHeight;
-
-                // Card Dimensions: reserve space for peeking fanned cards on the right and bottom
-                final double cardWidth;
-                final double cardHeight;
-                if (hasThird) {
-                  cardWidth = availableWidth - 34.0;
-                  cardHeight = availableHeight - 20.0;
-                } else if (hasNext) {
-                  cardWidth = availableWidth - 20.0;
-                  cardHeight = availableHeight - 12.0;
-                } else {
-                  cardWidth = availableWidth;
-                  cardHeight = availableHeight;
-                }
-
-                // Dynamic fanned angles and positions during drag/swipe
-                // Card 2: Starts at +3.2 degrees (0.056 rad) and smoothly untilts to 0 as Card 1 is dragged away
-                final card2Left = 16.0 * (1.0 - dragFraction);
-                final card2Top = 8.0 * (1.0 - dragFraction);
-                final card2Angle = 0.056 * (1.0 - dragFraction);
-                final card2Dim = (0.06 * (1.0 - dragFraction)).clamp(0.0, 1.0);
-
-                // Card 3: Starts at +6.2 degrees (0.108 rad) and smoothly rotates into Card 2's position
-                final card3Left = 30.0 - (14.0 * dragFraction);
-                final card3Top = 16.0 - (8.0 * dragFraction);
-                final card3Angle = 0.108 - (0.052 * dragFraction);
-                final card3Dim = (0.14 - (0.08 * dragFraction)).clamp(0.0, 1.0);
+                final cardWidth = constraints.maxWidth;
+                final cardHeight = constraints.maxHeight;
 
                 return Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    // 3rd Card in Stack (Bottom-most - Fanned furthest to the right)
-                    if (thirdPost != null)
-                      Positioned(
-                        left: card3Left,
-                        top: card3Top,
-                        width: cardWidth,
-                        height: cardHeight,
-                        child: Transform.rotate(
-                          angle: card3Angle,
-                          alignment: Alignment.bottomLeft,
-                          child: _buildCard(
-                            thirdPost,
-                            isInteractive: false,
-                            elevation: 1.5,
-                            cardIndex: thirdCardIndex,
-                            totalCount: totalEligible,
-                            dimOpacity: card3Dim,
-                          ),
-                        ),
-                      ),
-
-                    // 2nd Card in Stack (Middle - Fanned gently to the right)
+                    // Next Card in Stack (Sitting directly underneath, scaling smoothly into place)
                     if (secondPost != null)
                       Positioned(
-                        left: card2Left,
-                        top: card2Top,
+                        left: 0,
+                        top: 0,
                         width: cardWidth,
                         height: cardHeight,
-                        child: Transform.rotate(
-                          angle: card2Angle,
-                          alignment: Alignment.bottomLeft,
+                        child: Transform.scale(
+                          scale: 0.96 + (0.04 * dragFraction),
                           child: _buildCard(
                             secondPost,
                             isInteractive: false,
-                            elevation: 3.5,
+                            elevation: 2,
                             cardIndex: secondCardIndex,
                             totalCount: totalEligible,
-                            dimOpacity: card2Dim,
+                            dimOpacity: (0.12 * (1.0 - dragFraction)).clamp(0.0, 1.0),
                           ),
                         ),
                       ),
 
-                    // 1st Card in Stack (Active Top Card - Gesture Enabled)
+                    // Active Top Card (Gesture & Swipe Enabled)
                     Positioned(
                       left: _dragOffset.dx,
                       top: _dragOffset.dy,
@@ -398,11 +341,11 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
                           }
                         },
                         child: Transform.rotate(
-                          angle: _dragAngle,
+                          angle: _dragAngle * 0.4,
                           child: _buildCard(
                             topPost,
                             isInteractive: true,
-                            elevation: 6,
+                            elevation: 5,
                             cardIndex: topCardIndex,
                             totalCount: totalEligible,
                             dimOpacity: 0.0,
@@ -423,15 +366,15 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              // Previous Post (Swipe Left / Back)
+              // Previous Post (Swipe Left / Back - Loops infinitely)
               _buildActionButton(
                 icon: Icons.arrow_back_rounded,
-                color: safeIndex > 0 ? const Color(0xFF4B5563) : const Color(0xFF9CA3AF),
-                backgroundColor: safeIndex > 0 ? const Color(0xFFF3F4F6) : const Color(0xFFF9FAFB),
+                color: postCount > 1 ? const Color(0xFF4B5563) : const Color(0xFF9CA3AF),
+                backgroundColor: postCount > 1 ? const Color(0xFFF3F4F6) : const Color(0xFFF9FAFB),
                 size: 50,
                 iconSize: 24,
                 tooltip: 'Previous Post',
-                onTap: safeIndex > 0 ? () => _swipeManual(false) : () {},
+                onTap: postCount > 1 ? () => _swipeManual(false) : () {},
               ),
 
               const SizedBox(width: 16),
@@ -462,15 +405,15 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
 
               const SizedBox(width: 16),
 
-              // Next Post (Swipe Right / Forward)
+              // Next Post (Swipe Right / Forward - Loops infinitely)
               _buildActionButton(
                 icon: Icons.arrow_forward_rounded,
-                color: hasNext ? const Color(0xFF4F46E5) : const Color(0xFF9CA3AF),
-                backgroundColor: hasNext ? const Color(0xFFEEF2FF) : const Color(0xFFF9FAFB),
+                color: postCount > 1 ? const Color(0xFF4F46E5) : const Color(0xFF9CA3AF),
+                backgroundColor: postCount > 1 ? const Color(0xFFEEF2FF) : const Color(0xFFF9FAFB),
                 size: 50,
                 iconSize: 24,
                 tooltip: 'Next Post',
-                onTap: hasNext ? () => _swipeManual(true) : () {},
+                onTap: postCount > 1 ? () => _swipeManual(true) : () {},
               ),
             ],
           ),
@@ -763,12 +706,12 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
             Icon(Icons.campaign_rounded, size: 56, color: Color(0xFF818CF8)),
             SizedBox(height: 8),
             Text(
-              'ADVT App',
+              'ADVT',
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 14,
                 fontWeight: FontWeight.bold,
                 color: Color(0xFFA5B4FC),
-                letterSpacing: 0.5,
+                letterSpacing: 1.0,
               ),
             ),
           ],

@@ -8,7 +8,7 @@
     <uses-permission android:name="com.android.vending.BILLING" />
 
     <application
-        android:label="ADVT App"
+        android:label="ADVT"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true">

@@ -199,11 +199,20 @@ class _OtpScreenState extends State<OtpScreen> {
                 width: 52,
                 height: 52,
                 decoration: BoxDecoration(
-                  color: const Color(0xFFEEF2FF),
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFE0E7FF)),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x1A4F46E5),
+                      blurRadius: 10,
+                      offset: Offset(0, 4),
+                    ),
+                  ],
                 ),
-                child: const Icon(Icons.mark_email_unread_rounded, color: Color(0xFF4F46E5), size: 28),
+                clipBehavior: Clip.antiAlias,
+                child: Image.asset(
+                  'assets/images/app_icon.png',
+                  fit: BoxFit.cover,
+                ),
               ),
               const SizedBox(height: 24),
 

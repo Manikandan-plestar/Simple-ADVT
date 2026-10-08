@@ -221,14 +221,34 @@ class SettingsScreen extends StatelessWidget {
             Center(
               child: Column(
                 children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: const [
+                        BoxShadow(
+                          color: Color(0x14000000),
+                          blurRadius: 6,
+                          offset: Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: Image.asset(
+                      'assets/images/app_icon.png',
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   const Text(
-                    'ADVT App v1.0.0',
-                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF9CA3AF)),
+                    'ADVT v1.0.0',
+                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B)),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     'Signed in as ${user.email}',
-                    style: const TextStyle(fontSize: 11, color: Color(0xFFCBD5E1)),
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
                   ),
                 ],
               ),

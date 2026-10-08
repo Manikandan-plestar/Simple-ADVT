@@ -33,48 +33,48 @@ class _SplashScreenState extends State<SplashScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF4F46E5), // Indigo
+      backgroundColor: const Color(0xFF0F172A), // Sleek dark aesthetic matching brand logo
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 84,
-              height: 84,
-              decoration: const BoxDecoration(
-                color: Colors.white,
-                shape: BoxShape.circle,
+              width: 110,
+              height: 110,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(26),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 16,
-                    offset: Offset(0, 4),
+                    color: const Color(0xFF4F46E5).withOpacity(0.4),
+                    blurRadius: 24,
+                    offset: const Offset(0, 8),
                   ),
                 ],
               ),
-              child: const Icon(
-                Icons.near_me_rounded,
-                color: Color(0xFF4F46E5),
-                size: 46,
+              clipBehavior: Clip.antiAlias,
+              child: Image.asset(
+                'assets/images/app_icon.png',
+                fit: BoxFit.cover,
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 24),
             const Text(
-              'ADVT App',
+              'ADVT',
               style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.w800,
+                fontSize: 28,
+                fontWeight: FontWeight.w900,
                 color: Colors.white,
-                letterSpacing: 1.0,
+                letterSpacing: 2.0,
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             const Text(
               'Location Targeted Local Business Discovery',
               style: TextStyle(
-                fontSize: 12,
-                color: Color(0xFFE0E7FF),
+                fontSize: 12.5,
+                color: Color(0xFF94A3B8),
                 fontWeight: FontWeight.w500,
+                letterSpacing: 0.3,
               ),
             ),
           ],

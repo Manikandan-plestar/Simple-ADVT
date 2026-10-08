@@ -67,7 +67,7 @@ class AdvtApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => NotificationService()),
       ],
       child: MaterialApp(
-        title: 'ADVT App',
+        title: 'ADVT',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: true,

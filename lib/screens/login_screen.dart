@@ -324,29 +324,46 @@ class _LoginScreenState extends State<LoginScreen> {
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
                           Container(
-                            width: 48,
-                            height: 48,
+                            width: 52,
+                            height: 52,
                             decoration: BoxDecoration(
-                              color: const Color(0xFFEEF2FF),
                               borderRadius: BorderRadius.circular(16),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x1A4F46E5),
+                                  blurRadius: 10,
+                                  offset: Offset(0, 4),
+                                ),
+                              ],
                             ),
-                            child: const Center(
-                              child: Icon(
-                                Icons.mark_email_read_rounded,
-                                color: Color(0xFF4F46E5),
-                                size: 26,
-                              ),
+                            clipBehavior: Clip.antiAlias,
+                            child: Image.asset(
+                              'assets/images/app_icon.png',
+                              fit: BoxFit.cover,
                             ),
                           ),
                           const SizedBox(width: 14),
-                          const Text(
-                            'Welcome',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF111827),
-                              letterSpacing: -0.5,
-                            ),
+                          const Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'ADVT',
+                                style: TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF111827),
+                                  letterSpacing: 0.5,
+                                ),
+                              ),
+                              Text(
+                                'Explore & Advertise',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Color(0xFF6B7280),
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -355,7 +372,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                       // Welcome Subtitle
                       const Text(
-                        'Welcome to  ADVT',
+                        'Welcome to ADVT',
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.bold,

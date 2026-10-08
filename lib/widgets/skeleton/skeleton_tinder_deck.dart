@@ -13,44 +13,16 @@ class SkeletonTinderDeck extends StatelessWidget {
         // Main Stacked Card Area
         Expanded(
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(14, 6, 14, 12),
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final availableWidth = constraints.maxWidth;
-                final availableHeight = constraints.maxHeight;
-
-                final cardWidth = availableWidth - 20.0;
-                final cardHeight = availableHeight - 12.0;
+                final cardWidth = constraints.maxWidth;
+                final cardHeight = constraints.maxHeight;
 
                 return Stack(
                   clipBehavior: Clip.none,
                   children: [
-                    // Peeking 2nd Card in Background (Fanned right)
-                    Positioned(
-                      left: 16.0,
-                      top: 8.0,
-                      width: cardWidth,
-                      height: cardHeight,
-                      child: Transform.rotate(
-                        angle: 0.056,
-                        alignment: Alignment.bottomLeft,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFF3F4F6),
-                            borderRadius: BorderRadius.circular(22),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x0D000000),
-                                blurRadius: 10,
-                                offset: Offset(2, 4),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    // Active Top Card Skeleton
+                    // Clean Centered Top Card Skeleton
                     Positioned(
                       left: 0,
                       top: 0,
@@ -63,9 +35,9 @@ class SkeletonTinderDeck extends StatelessWidget {
                           border: Border.all(color: const Color(0xFFE5E7EB), width: 1),
                           boxShadow: const [
                             BoxShadow(
-                              color: Color(0x14000000),
-                              blurRadius: 18,
-                              offset: Offset(0, 6),
+                              color: Color(0x0F000000),
+                              blurRadius: 14,
+                              offset: Offset(0, 4),
                             ),
                           ],
                         ),

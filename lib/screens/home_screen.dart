@@ -933,24 +933,33 @@ class _HomeScreenState extends State<HomeScreen> {
                           key: const ValueKey('search_normal_header'),
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
-                            // 1. Left Corner Image Logo
+                            // 1. Left Corner Image Logo (Brand App Icon)
                             Container(
                               width: 44,
                               height: 44,
                               decoration: BoxDecoration(
-                                color: const Color(0xFFF8FAFC),
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(13),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x184F46E5),
+                                    blurRadius: 8,
+                                    offset: Offset(0, 2),
+                                  ),
+                                ],
                               ),
                               child: ClipRRect(
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(13),
                                 child: Image.asset(
-                                  'assets/images/explore_header.jpg',
-                                  fit: BoxFit.contain,
+                                  'assets/images/app_icon.png',
+                                  fit: BoxFit.cover,
                                   errorBuilder: (context, error, stackTrace) {
-                                    return const Icon(
-                                      Icons.campaign_rounded,
-                                      size: 26,
-                                      color: Color(0xFF4F46E5),
+                                    return Container(
+                                      color: const Color(0xFFEEF2FF),
+                                      child: const Icon(
+                                        Icons.campaign_rounded,
+                                        size: 24,
+                                        color: Color(0xFF4F46E5),
+                                      ),
                                     );
                                   },
                                 ),
