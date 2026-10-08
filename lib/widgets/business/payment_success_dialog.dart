@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../../services/post_service.dart';
+import '../../utils/date_time_utils.dart';
 
 class PaymentSuccessDialog extends StatelessWidget {
   final PostItem post;
@@ -14,16 +14,10 @@ class PaymentSuccessDialog extends StatelessWidget {
     this.onDismiss,
   });
 
-  String _formatDateTime(DateTime? dt) {
-    if (dt == null) return 'Active Now';
-    final formatter = DateFormat('dd MMM yyyy, hh:mm a');
-    return formatter.format(dt);
-  }
-
   @override
   Widget build(BuildContext context) {
-    final publishedStr = _formatDateTime(post.publishedAt ?? post.createdAt);
-    final expiryStr = _formatDateTime(post.expiresAt ?? post.createdAt.add(Duration(days: post.durationDays)));
+    final publishedStr = DateTimeUtils.formatDateTime(post.publishedAt ?? post.createdAt);
+    final expiryStr = DateTimeUtils.formatDateTime(post.expiresAt ?? (post.publishedAt != null ? post.publishedAt!.add(Duration(days: post.durationDays)) : post.createdAt.add(Duration(days: post.durationDays))));
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),

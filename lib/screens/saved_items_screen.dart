@@ -105,6 +105,9 @@ class _SavedItemsScreenState extends State<SavedItemsScreen> {
                         padding: const EdgeInsets.only(bottom: 12),
                         child: PostCard(
                           post: post,
+                          onView: () {
+                            Navigator.pushNamed(context, '/post-details', arguments: post.postId);
+                          },
                           onBookmarkTap: () {
                             postService.toggleSavePost(
                               post.postId,

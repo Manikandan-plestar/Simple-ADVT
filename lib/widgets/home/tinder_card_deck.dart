@@ -201,6 +201,34 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
     );
   }
 
+  void _openFullScreenImage(BuildContext context, String imageUrl) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            elevation: 0,
+            iconTheme: const IconThemeData(color: Colors.white),
+            title: const Text('Post Image', style: TextStyle(color: Colors.white, fontSize: 16)),
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: imageUrl.startsWith('http')
+                  ? Image.network(imageUrl, fit: BoxFit.contain)
+                  : (imageUrl.startsWith('assets/')
+                      ? Image.asset(imageUrl, fit: BoxFit.contain)
+                      : Image.file(File(imageUrl), fit: BoxFit.contain)),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.posts.isEmpty) {
@@ -358,6 +386,17 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
                         onPanStart: _onPanStart,
                         onPanUpdate: _onPanUpdate,
                         onPanEnd: _onPanEnd,
+                        onLongPress: () {
+                          final img = topPost.images.isNotEmpty
+                              ? topPost.images.first
+                              : (topPost.brandLogo ?? '');
+                          if (img.isNotEmpty) {
+                            if (widget.onMoreInfoClick != null) {
+                              widget.onMoreInfoClick!(topPost);
+                            }
+                            _openFullScreenImage(context, img);
+                          }
+                        },
                         child: Transform.rotate(
                           angle: _dragAngle,
                           child: _buildCard(
@@ -511,32 +550,13 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
           // 1. Full Card Background & Media
           _buildCardMedia(post, imagePath),
 
-          // 2. Subtle Depth Dimming Overlay for Background Cards
+          // 2. Subtle Depth Dimming Overlay for Background Cards only (inactive cards in stack)
           if (dimOpacity > 0.0)
             Positioned.fill(
               child: Container(
                 color: Colors.black.withValues(alpha: dimOpacity),
               ),
             ),
-
-          // 3. Top & Bottom Gradient Scrims
-          Positioned.fill(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  stops: [0.0, 0.22, 0.60, 1.0],
-                  colors: [
-                    Color(0x99000000),
-                    Colors.transparent,
-                    Color(0x22000000),
-                    Color(0xD9000000),
-                  ],
-                ),
-              ),
-            ),
-          ),
 
           // 3. Top Header: Publisher Avatar, Name, and Location Badge
           Positioned(
@@ -585,8 +605,8 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
                 ),
                 const Spacer(),
 
-                // Location Tag
-                if (post.displayLocation.isNotEmpty)
+                // Location Tag (Owner Only)
+                if (post.isOwner && post.displayLocation.isNotEmpty)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
                     decoration: BoxDecoration(
@@ -615,28 +635,7 @@ class _TinderCardDeckState extends State<TinderCardDeck> with SingleTickerProvid
             ),
           ),
 
-          // 4. Bottom Section: Post Title (with right padding leaving room for counter)
-          Positioned(
-            left: 16,
-            right: 80,
-            bottom: 16,
-            child: Text(
-              post.displayTitle,
-              style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-                letterSpacing: -0.2,
-                shadows: [
-                  Shadow(color: Colors.black87, blurRadius: 6, offset: Offset(0, 1)),
-                ],
-              ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-
-          // 5. Bottom Right: Post Count Indicator (CURRENT_POST_NUMBER / TOTAL_POST_COUNT)
+          // 4. Bottom Right: Post Count Indicator (CURRENT_POST_NUMBER / TOTAL_POST_COUNT)
           Positioned(
             right: 14,
             bottom: 14,
@@ -908,7 +907,7 @@ class _TinderPostMoreInfoSheet extends StatelessWidget {
                                   const Icon(Icons.access_time_rounded, size: 12, color: Color(0xFF9CA3AF)),
                                   const SizedBox(width: 4),
                                   Text(
-                                    post.timeAgo,
+                                    post.calculatedTimeAgo,
                                     style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
                                   ),
                                   const SizedBox(width: 10),
@@ -975,8 +974,8 @@ class _TinderPostMoreInfoSheet extends StatelessWidget {
                       const SizedBox(height: 16),
                     ],
 
-                    // Target Locations Pill List
-                    if (post.displayLocation.isNotEmpty) ...[
+                    // Target Locations Pill List (Owner Only)
+                    if (post.isOwner && post.displayLocation.isNotEmpty) ...[
                       const Text(
                         'Target Location',
                         style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF6B7280)),

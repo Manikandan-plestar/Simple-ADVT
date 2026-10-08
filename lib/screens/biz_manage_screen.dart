@@ -302,13 +302,7 @@ class _BizManageScreenState extends State<BizManageScreen> {
                     return InkWell(
                       borderRadius: BorderRadius.circular(18),
                       onTap: () {
-                        if (isJob) {
-                          Navigator.pushNamed(context, '/job-details', arguments: post.postId);
-                        } else if (isCoupon) {
-                          Navigator.pushNamed(context, '/coupon-details', arguments: post.postId);
-                        } else {
-                          Navigator.pushNamed(context, '/offer-details', arguments: post.postId);
-                        }
+                        Navigator.pushNamed(context, '/post-details', arguments: post.postId);
                       },
                       child: Container(
                         decoration: BoxDecoration(

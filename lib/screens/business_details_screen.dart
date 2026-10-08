@@ -89,8 +89,13 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
       );
     }
 
-    // 3. Fetch posts for this business
-    await postService.fetchPosts(businessId: widget.businessProfileId);
+    // 3. Fetch posts for this business with user authentication context
+    await postService.fetchPosts(
+      businessId: widget.businessProfileId,
+      authToken: user.authToken,
+      userId: user.userId.isNotEmpty ? user.userId : null,
+      userEmail: user.email.isNotEmpty ? user.email : null,
+    );
 
     if (mounted) {
       setState(() => _isLoading = false);
@@ -827,7 +832,13 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
                             onEdit: isOwner ? () => _openEditPostModal(context, post, biz) : null,
                             onDelete: isOwner ? () => _confirmDeletePost(context, post) : null,
                             onImageLongPress: (img) => _showImageViewer(context, img),
-                            onView: () {},
+                            onView: () {
+                              Navigator.pushNamed(context, '/post-details', arguments: post.postId).then((_) {
+                                if (mounted) {
+                                  _loadData();
+                                }
+                              });
+                            },
                             onToggleSave: () {
                               postService.toggleSavePost(
                                 post.postId,

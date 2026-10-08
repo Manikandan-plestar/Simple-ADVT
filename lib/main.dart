@@ -26,6 +26,7 @@ import 'screens/my_profile_screen.dart';
 import 'screens/followed_screen.dart';
 import 'screens/saved_items_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/post_details_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -123,6 +124,9 @@ class AdvtApp extends StatelessWidget {
               return MaterialPageRoute(builder: (_) => const FollowedScreen());
             case '/saved-items':
               return MaterialPageRoute(builder: (_) => const SavedItemsScreen());
+            case '/post-details':
+              final postId = settings.arguments as String? ?? 'P001';
+              return MaterialPageRoute(builder: (_) => PostDetailsScreen(postId: postId));
             case '/settings':
               return MaterialPageRoute(builder: (_) => const SettingsScreen());
             default:

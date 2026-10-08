@@ -12,6 +12,7 @@ class CreatePostModal extends StatefulWidget {
   final PostItem? initialPost;
   final String? modalTitle;
   final String? submitButtonText;
+  final bool isReshare;
   final Function({
     required String title,
     required String subtitle,
@@ -28,6 +29,7 @@ class CreatePostModal extends StatefulWidget {
     this.initialPost,
     this.modalTitle,
     this.submitButtonText,
+    this.isReshare = false,
     required this.onSubmit,
   });
 
@@ -77,17 +79,14 @@ class _CreatePostModalState extends State<CreatePostModal> {
     super.dispose();
   }
 
-  Future<void> _pickImagesFromDevice() async {
+  Future<void> _pickImageFromDevice() async {
     setState(() => _isProcessingImages = true);
     try {
-      final result = await DeviceImagePickerService.pickImagesFromGallery(
-        currentSelected: _selectedImages,
-        maxLimit: 6,
-      );
+      final result = await DeviceImagePickerService.pickSingleImage();
 
-      if (mounted) {
+      if (result != null && result.isNotEmpty && mounted) {
         setState(() {
-          _selectedImages = result;
+          _selectedImages = [result];
         });
       }
     } catch (e) {
@@ -103,9 +102,9 @@ class _CreatePostModalState extends State<CreatePostModal> {
     }
   }
 
-  void _removeImage(int index) {
+  void _removeImage() {
     setState(() {
-      _selectedImages.removeAt(index);
+      _selectedImages.clear();
     });
   }
 
@@ -196,7 +195,7 @@ class _CreatePostModalState extends State<CreatePostModal> {
 
   @override
   Widget build(BuildContext context) {
-    final isEditing = widget.initialPost != null;
+    final isEditing = widget.initialPost != null && !widget.isReshare;
     final activePriceText = _getPriceDisplay(_selectedDuration);
 
     return Container(
@@ -245,92 +244,127 @@ class _CreatePostModalState extends State<CreatePostModal> {
             ),
             const SizedBox(height: 16),
 
-            // 1. Post Images Selection
+            // 1. Single Post Image Selection
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 const Text(
-                  'Post Images',
+                  'Post Photo',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF374151)),
                 ),
                 Text(
-                  '${_selectedImages.length}/6 images',
-                  style: const TextStyle(fontSize: 11, color: Color(0xFF9CA3AF)),
+                  _selectedImages.isNotEmpty ? '1 photo selected' : '1 photo required',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w500,
+                    color: _selectedImages.isNotEmpty ? const Color(0xFF059669) : const Color(0xFF9CA3AF),
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
 
-            // Images Grid / Picker Row
-            SizedBox(
-              height: 86,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  // Add Image Button
-                  GestureDetector(
-                    onTap: _isProcessingImages ? null : _pickImagesFromDevice,
-                    child: Container(
-                      width: 86,
-                      height: 86,
-                      margin: const EdgeInsets.only(right: 10),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFF9FAFB),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE5E7EB), style: BorderStyle.solid),
-                      ),
-                      child: _isProcessingImages
-                          ? const Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4F46E5))))
-                          : const Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.add_photo_alternate_outlined, color: Color(0xFF4F46E5), size: 26),
-                                SizedBox(height: 4),
-                                Text('Add Image', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFF4F46E5))),
-                              ],
-                            ),
-                    ),
+            // Single Image Selector Area
+            if (_selectedImages.isEmpty)
+              GestureDetector(
+                onTap: _isProcessingImages ? null : _pickImageFromDevice,
+                child: Container(
+                  width: double.infinity,
+                  height: 110,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF9FAFB),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: const Color(0xFFE5E7EB), width: 1.2),
                   ),
-
-                  // Selected Images Previews
-                  ..._selectedImages.asMap().entries.map((entry) {
-                    final index = entry.key;
-                    final imgPath = entry.value;
-                    return Container(
-                      width: 86,
-                      height: 86,
-                      margin: const EdgeInsets.only(right: 10),
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        children: [
-                          ClipRRect(
-                            borderRadius: BorderRadius.circular(14),
-                            child: imgPath.startsWith('http')
-                                ? Image.network(imgPath, width: 86, height: 86, fit: BoxFit.cover)
-                                : Image.file(File(imgPath), width: 86, height: 86, fit: BoxFit.cover),
+                  child: _isProcessingImages
+                      ? const Center(
+                          child: SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF4F46E5)),
                           ),
-                          Positioned(
-                            top: -4,
-                            right: -4,
-                            child: GestureDetector(
-                              onTap: () => _removeImage(index),
-                              child: Container(
-                                padding: const EdgeInsets.all(3),
-                                decoration: const BoxDecoration(
-                                  color: Color(0xFFEF4444),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(Icons.close, color: Colors.white, size: 12),
-                              ),
+                        )
+                      : const Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.add_photo_alternate_outlined, color: Color(0xFF4F46E5), size: 32),
+                            SizedBox(height: 6),
+                            Text(
+                              'Tap to select post photo',
+                              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF4F46E5)),
                             ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Single image allowed (JPG, PNG, WebP)',
+                              style: TextStyle(fontSize: 10.5, color: Color(0xFF9CA3AF)),
+                            ),
+                          ],
+                        ),
+                ),
+              )
+            else
+              Container(
+                width: double.infinity,
+                height: 140,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: const Color(0xFFE5E7EB)),
+                ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(15),
+                      child: _selectedImages.first.startsWith('http')
+                          ? Image.network(_selectedImages.first, fit: BoxFit.cover)
+                          : Image.file(File(_selectedImages.first), fit: BoxFit.cover),
+                    ),
+                    // Top Right: Remove Photo Button
+                    Positioned(
+                      top: 8,
+                      right: 8,
+                      child: GestureDetector(
+                        onTap: _removeImage,
+                        child: Container(
+                          padding: const EdgeInsets.all(6),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.65),
+                            shape: BoxShape.circle,
                           ),
-                        ],
+                          child: const Icon(Icons.close_rounded, color: Colors.white, size: 16),
+                        ),
                       ),
-                    );
-                  }),
-                ],
+                    ),
+                    // Bottom Right: Change Photo Button
+                    Positioned(
+                      bottom: 8,
+                      right: 8,
+                      child: GestureDetector(
+                        onTap: _isProcessingImages ? null : _pickImageFromDevice,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withValues(alpha: 0.7),
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: Colors.white.withValues(alpha: 0.3)),
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.edit_rounded, color: Colors.white, size: 13),
+                              SizedBox(width: 4),
+                              Text(
+                                'Change Photo',
+                                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
             const SizedBox(height: 18),
 
             // 2. Post Title

@@ -5,6 +5,11 @@
 .env*
 *.env*
 backend/.env*
+android/key.properties
+**/android/key.properties
+*.jks
+*.keystore
+upload-keystore.jks
 
 # Node dependencies
 node_modules/

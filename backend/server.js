@@ -965,7 +965,7 @@ async function runExpiredPostsCleanup() {
     const [res] = await pool.query(`
       UPDATE posts 
       SET status = 'expired', is_active = 0 
-      WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= NOW()
+      WHERE status = 'active' AND expires_at IS NOT NULL AND expires_at <= UTC_TIMESTAMP()
     `);
     if (res && res.changedRows > 0) {
       console.log(`[Scheduler] Automatically marked ${res.changedRows} post(s) as expired.`);
@@ -1718,6 +1718,110 @@ app.put('/api/update-profile', async (req, res) => {
   }
 });
 
+/**
+ * 7. DELETE /api/users/me (or /api/users/delete-account)
+ * Permanently deletes the authenticated user account and wipes all associated:
+ * - Business Profiles
+ * - Posts & Pending Posts
+ * - Saved Posts / Bookmarks
+ * - Followed Businesses
+ * - Notifications
+ * - Payment Records
+ * - OTP records
+ * - User Record from database
+ */
+app.all(['/api/users/me', '/api/users/delete-account', '/api/delete-account'], authenticateUser, async (req, res) => {
+  if (req.method !== 'DELETE' && req.method !== 'POST') {
+    return res.status(405).json({ success: false, message: 'Method not allowed' });
+  }
+
+  try {
+    const userId = req.user.id;
+    const userEmail = (req.user.email || '').toLowerCase().trim();
+
+    // 1. Find all business IDs belonging to this user
+    const [bizRows] = await pool.query('SELECT business_id FROM business_profile WHERE user_id = ?', [userId]);
+    const businessIds = bizRows.map(b => b.business_id);
+
+    // 2. Find all post IDs belonging to this user or their businesses
+    let postIds = [];
+    if (businessIds.length > 0) {
+      const [pRows] = await pool.query('SELECT post_id FROM posts WHERE user_id = ? OR business_id IN (?)', [userId, businessIds]);
+      postIds = pRows.map(p => p.post_id);
+    } else {
+      const [pRows] = await pool.query('SELECT post_id FROM posts WHERE user_id = ?', [userId]);
+      postIds = pRows.map(p => p.post_id);
+    }
+
+    // 3. Delete saved_posts (saved by user, or pointing to user's posts)
+    if (postIds.length > 0) {
+      await pool.query('DELETE FROM saved_posts WHERE user_id = ? OR post_id IN (?)', [userId, postIds]);
+    } else {
+      await pool.query('DELETE FROM saved_posts WHERE user_id = ?', [userId]);
+    }
+
+    // 4. Delete payment_transactions
+    if (postIds.length > 0 || businessIds.length > 0) {
+      await pool.query('DELETE FROM payment_transactions WHERE user_id = ? OR business_id IN (?) OR post_id IN (?)', [
+        userId,
+        businessIds.length > 0 ? businessIds : [-1],
+        postIds.length > 0 ? postIds : [-1]
+      ]);
+    } else {
+      await pool.query('DELETE FROM payment_transactions WHERE user_id = ?', [userId]);
+    }
+
+    // 5. Delete followed_businesses
+    if (businessIds.length > 0) {
+      await pool.query('DELETE FROM followed_businesses WHERE user_id = ? OR business_id IN (?)', [userId, businessIds]);
+    } else {
+      await pool.query('DELETE FROM followed_businesses WHERE user_id = ?', [userId]);
+    }
+
+    // 6. Delete notifications
+    if (businessIds.length > 0 || postIds.length > 0) {
+      await pool.query('DELETE FROM notifications WHERE user_id = ? OR business_id IN (?) OR post_id IN (?)', [
+        userId,
+        businessIds.length > 0 ? businessIds : [-1],
+        postIds.length > 0 ? postIds : [-1]
+      ]);
+    } else {
+      await pool.query('DELETE FROM notifications WHERE user_id = ?', [userId]);
+    }
+
+    // 7. Delete posts
+    if (businessIds.length > 0) {
+      await pool.query('DELETE FROM posts WHERE user_id = ? OR business_id IN (?)', [userId, businessIds]);
+    } else {
+      await pool.query('DELETE FROM posts WHERE user_id = ?', [userId]);
+    }
+
+    // 8. Delete business profiles
+    await pool.query('DELETE FROM business_profile WHERE user_id = ?', [userId]);
+
+    // 9. Delete email OTPs
+    if (userEmail) {
+      await pool.query('DELETE FROM email_otp WHERE email = ?', [userEmail]);
+    }
+
+    // 10. Delete the user record
+    await pool.query('DELETE FROM users WHERE id = ?', [userId]);
+
+    console.log(`[DELETE-ACCOUNT] Permanently deleted user_id=${userId}, email=${userEmail}, cascading all profiles and posts.`);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Account and all associated business profiles, posts, and data have been permanently deleted.'
+    });
+  } catch (error) {
+    console.error('Error in account deletion:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to delete account. Please try again or contact support.'
+    });
+  }
+});
+
 // ==========================================
 // 6. BUSINESS PROFILE APIS
 // ==========================================
@@ -2060,9 +2164,27 @@ app.delete('/api/business-profiles/:id', authenticateUser, async (req, res) => {
 // 7. BUSINESS POSTS & EXPLORE LOCATION FILTERING
 // ==========================================
 
+function formatIsoUtc(dateVal) {
+  if (!dateVal) return null;
+  if (dateVal instanceof Date) {
+    return dateVal.toISOString();
+  }
+  const str = dateVal.toString().trim();
+  if (!str) return null;
+  if (str.endsWith('Z') || str.includes('+') || str.includes('T')) {
+    const d = new Date(str);
+    return isNaN(d.getTime()) ? str : d.toISOString();
+  }
+  const isoStr = str.replace(' ', 'T') + 'Z';
+  const d = new Date(isoStr);
+  return isNaN(d.getTime()) ? str : d.toISOString();
+}
+
 function calculateTimeAgo(dateInput) {
   if (!dateInput) return 'Just now';
-  const diffMs = Date.now() - new Date(dateInput).getTime();
+  const dateObj = dateInput instanceof Date ? dateInput : new Date(dateInput);
+  const diffMs = Date.now() - dateObj.getTime();
+  if (isNaN(diffMs)) return 'Just now';
   const diffMinutes = Math.floor(diffMs / (1000 * 60));
   if (diffMinutes < 1) return 'Just now';
   if (diffMinutes < 60) return `${diffMinutes}m ago`;
@@ -2074,7 +2196,7 @@ function calculateTimeAgo(dateInput) {
   return `${Math.floor(diffDays / 7)}w ago`;
 }
 
-function formatPostRow(r, isSaved = false) {
+function formatPostRow(r, isSaved = false, isOwner = false, payment = null) {
   let parsedImages = [];
   try {
     parsedImages = r.images ? (typeof r.images === 'string' ? JSON.parse(r.images) : r.images) : [];
@@ -2089,11 +2211,17 @@ function formatPostRow(r, isSaved = false) {
     parsedTargetLocations = [];
   }
 
-  const isExpired = r.status === 'expired' || (r.expires_at && new Date(r.expires_at) <= new Date());
+  const expiresAtDate = r.expires_at ? new Date(r.expires_at) : null;
+  const isExpired = r.status === 'expired' || (expiresAtDate && expiresAtDate.getTime() <= Date.now());
   const effectiveStatus = isExpired ? 'expired' : (r.status || (r.is_active === 1 ? 'active' : 'pending_payment'));
   const effectiveIsActive = effectiveStatus === 'active' && r.is_active === 1 && !isExpired;
 
-  return {
+  const formattedPublishedAt = formatIsoUtc(r.published_at);
+  const formattedExpiresAt = formatIsoUtc(r.expires_at);
+  const formattedCreatedAt = formatIsoUtc(r.created_at);
+  const formattedUpdatedAt = formatIsoUtc(r.updated_at);
+
+  const postObj = {
     post_id: r.post_id,
     postId: `P${r.post_id.toString().padStart(3, '0')}`,
     business_id: r.business_id,
@@ -2117,22 +2245,74 @@ function formatPostRow(r, isSaved = false) {
     duration_days: r.duration_days !== undefined && r.duration_days !== null ? parseInt(r.duration_days, 10) : 1,
     durationDays: r.duration_days !== undefined && r.duration_days !== null ? parseInt(r.duration_days, 10) : 1,
     status: effectiveStatus,
-    published_at: r.published_at,
-    publishedAt: r.published_at,
-    expires_at: r.expires_at,
-    expiresAt: r.expires_at,
-    payment_id: r.payment_id,
-    paymentId: r.payment_id,
+    published_at: formattedPublishedAt,
+    publishedAt: formattedPublishedAt,
+    expires_at: formattedExpiresAt,
+    expiresAt: formattedExpiresAt,
     more_info_clicks: r.more_info_clicks !== undefined && r.more_info_clicks !== null ? parseInt(r.more_info_clicks, 10) : 0,
     moreInfoClickCount: r.more_info_clicks !== undefined && r.more_info_clicks !== null ? parseInt(r.more_info_clicks, 10) : 0,
     saved_count: r.saved_count !== undefined && r.saved_count !== null ? parseInt(r.saved_count, 10) : 0,
     savedCount: r.saved_count !== undefined && r.saved_count !== null ? parseInt(r.saved_count, 10) : 0,
     is_active: effectiveIsActive,
     isSaved: isSaved || r.is_saved === 1,
+    is_owner: isOwner,
+    isOwner: isOwner,
     timeAgo: calculateTimeAgo(r.published_at || r.created_at),
-    createdAt: r.created_at,
-    created_at: r.created_at
+    createdAt: formattedCreatedAt,
+    created_at: formattedCreatedAt,
+    updatedAt: formattedUpdatedAt,
+    updated_at: formattedUpdatedAt
   };
+
+  // Include payment and transaction info ONLY if requester is verified owner
+  if (isOwner && payment) {
+    postObj.payment = {
+      transaction_id: payment.transaction_id,
+      transactionId: payment.transaction_id,
+      product_id: payment.product_id,
+      productId: payment.product_id,
+      platform: payment.platform,
+      selected_days: payment.selected_days || r.duration_days || 1,
+      selectedDays: payment.selected_days || r.duration_days || 1,
+      amount: parseFloat(payment.amount) || 0.0,
+      currency: payment.currency || 'INR',
+      payment_status: payment.payment_status || 'completed',
+      paymentStatus: payment.payment_status || 'completed',
+      verification_status: payment.verification_status || 'verified',
+      verificationStatus: payment.verification_status || 'verified',
+      payment_time: formatIsoUtc(payment.payment_time || payment.created_at),
+      paymentTime: formatIsoUtc(payment.payment_time || payment.created_at),
+      published_at: formattedPublishedAt,
+      publishedAt: formattedPublishedAt,
+      expires_at: formattedExpiresAt,
+      expiresAt: formattedExpiresAt,
+    };
+    postObj.payment_id = payment.transaction_id;
+    postObj.paymentId = payment.transaction_id;
+    postObj.payment_time = formatIsoUtc(payment.payment_time || payment.created_at);
+    postObj.paymentTime = formatIsoUtc(payment.payment_time || payment.created_at);
+  } else if (isOwner && r.payment_id) {
+    postObj.payment_id = r.payment_id;
+    postObj.paymentId = r.payment_id;
+    postObj.payment = {
+      transaction_id: r.payment_id,
+      transactionId: r.payment_id,
+      product_id: `advt_post_${r.duration_days || 1}_day${(r.duration_days || 1) > 1 ? 's' : ''}`,
+      productId: `advt_post_${r.duration_days || 1}_day${(r.duration_days || 1) > 1 ? 's' : ''}`,
+      selected_days: r.duration_days || 1,
+      selectedDays: r.duration_days || 1,
+      payment_status: 'completed',
+      paymentStatus: 'completed',
+      payment_time: formattedPublishedAt,
+      paymentTime: formattedPublishedAt,
+      published_at: formattedPublishedAt,
+      publishedAt: formattedPublishedAt,
+      expires_at: formattedExpiresAt,
+      expiresAt: formattedExpiresAt,
+    };
+  }
+
+  return postObj;
 }
 
 /**
@@ -2234,7 +2414,7 @@ app.post(['/api/posts', '/api/posts/create-pending'], authenticateUser, async (r
     return res.status(201).json({
       success: true,
       message: 'Pending post created. Please complete in-app payment to publish.',
-      post: formatPostRow(insertedRows[0])
+      post: formatPostRow(insertedRows[0], false, true)
     });
   } catch (error) {
     console.error('[Posts] Create error:', error.message);
@@ -2340,7 +2520,7 @@ app.post('/api/payments/verify-and-activate-post', authenticateUser, async (req,
         return res.status(200).json({
           success: true,
           message: 'Post payment already verified and active.',
-          post: formatPostRow(refreshedRows[0]),
+          post: formatPostRow(refreshedRows[0], false, true, existingTx[0]),
           transaction: existingTx[0]
         });
       }
@@ -2352,7 +2532,7 @@ app.post('/api/payments/verify-and-activate-post', authenticateUser, async (req,
       });
     }
 
-    // 5. Authoritative Server Payment Time and Expiration Calculation
+    // 5. Authoritative Server Payment Time and Expiration Calculation in UTC
     const serverPaymentTime = new Date();
     const serverExpiresAt = new Date(serverPaymentTime.getTime() + (validatedDays * 24 * 60 * 60 * 1000));
     const amountCharged = process.env.NODE_ENV === 'production' ? productConfig.prodPrice : productConfig.testPrice;
@@ -2429,19 +2609,35 @@ app.post('/api/payments/verify-and-activate-post', authenticateUser, async (req,
       WHERE p.post_id = ? LIMIT 1
     `, [targetPostId]);
 
+    const paymentInfoObj = {
+      transaction_id: targetTxId,
+      transactionId: targetTxId,
+      product_id: targetProductId,
+      productId: targetProductId,
+      platform: targetPlatform,
+      selected_days: validatedDays,
+      selectedDays: validatedDays,
+      amount: amountCharged,
+      currency: 'INR',
+      payment_status: 'completed',
+      paymentStatus: 'completed',
+      verification_status: 'verified',
+      verificationStatus: 'verified',
+      payment_time: serverPaymentTime.toISOString(),
+      paymentTime: serverPaymentTime.toISOString(),
+      published_at: serverPaymentTime.toISOString(),
+      publishedAt: serverPaymentTime.toISOString(),
+      expires_at: serverExpiresAt.toISOString(),
+      expiresAt: serverExpiresAt.toISOString()
+    };
+
     console.log(`[Payment] Verified and activated Post ID ${targetPostId} for ${validatedDays} day(s). Published: ${serverPaymentTime.toISOString()}, Expires: ${serverExpiresAt.toISOString()}`);
 
     return res.status(200).json({
       success: true,
       message: 'Payment verified and post successfully published!',
-      post: formatPostRow(finalRows[0]),
-      payment: {
-        transactionId: targetTxId,
-        productId: targetProductId,
-        durationDays: validatedDays,
-        publishedAt: serverPaymentTime,
-        expiresAt: serverExpiresAt
-      }
+      post: formatPostRow(finalRows[0], false, true, paymentInfoObj),
+      payment: paymentInfoObj
     });
   } catch (error) {
     console.error('[Payment] Verification error:', error.message);
@@ -2484,14 +2680,14 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], authenticateUser, 
         const isOwner = user && bizCheck.length > 0 && bizCheck[0].user_id === user.id;
 
         let querySql = `
-          SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+          SELECT p.*, b.business_name, b.profile_image AS business_profile_image, b.user_id AS business_owner_id
           FROM posts p
           LEFT JOIN business_profile b ON p.business_id = b.business_id
           WHERE p.business_id = ?
         `;
 
         if (!isOwner) {
-          querySql += ` AND p.status = 'active' AND p.is_active = 1 AND (p.expires_at IS NULL OR p.expires_at > NOW())`;
+          querySql += ` AND p.status = 'active' AND p.is_active = 1 AND (p.expires_at IS NULL OR p.expires_at > UTC_TIMESTAMP())`;
         }
 
         querySql += ` ORDER BY p.created_at DESC`;
@@ -2504,7 +2700,21 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], authenticateUser, 
           savedPostIds = new Set(savedRows.map(s => s.post_id));
         }
 
-        const posts = rows.map(r => formatPostRow(r, savedPostIds.has(r.post_id)));
+        let postPaymentMap = {};
+        if (isOwner && rows.length > 0) {
+          const postIds = rows.map(r => r.post_id);
+          const [txRows] = await pool.query(
+            `SELECT * FROM payment_transactions WHERE post_id IN (?) ORDER BY id DESC`,
+            [postIds]
+          );
+          for (const tx of txRows) {
+            if (!postPaymentMap[tx.post_id]) {
+              postPaymentMap[tx.post_id] = tx;
+            }
+          }
+        }
+
+        const posts = rows.map(r => formatPostRow(r, savedPostIds.has(r.post_id), isOwner, postPaymentMap[r.post_id]));
         return res.status(200).json({
           success: true,
           count: posts.length,
@@ -2520,7 +2730,7 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], authenticateUser, 
       SELECT p.*, b.business_name, b.profile_image AS business_profile_image
       FROM posts p
       LEFT JOIN business_profile b ON p.business_id = b.business_id
-      WHERE p.status = 'active' AND p.is_active = 1 AND (p.expires_at IS NULL OR p.expires_at > NOW())
+      WHERE p.status = 'active' AND p.is_active = 1 AND (p.expires_at IS NULL OR p.expires_at > UTC_TIMESTAMP())
       ORDER BY p.published_at DESC, p.created_at DESC
     `);
 
@@ -2574,7 +2784,8 @@ app.get(['/api/posts', '/api/explore-posts', '/api/explore'], authenticateUser, 
       }
     }
 
-    const posts = pagedRows.map(r => formatPostRow(r, savedPostIds.has(r.post_id)));
+    // Public feed posts never include private owner payment info
+    const posts = pagedRows.map(r => formatPostRow(r, savedPostIds.has(r.post_id), false, null));
 
     return res.status(200).json({
       success: true,
@@ -2620,8 +2831,29 @@ app.get('/api/posts/:id', async (req, res, next) => {
       return res.status(404).json({ success: false, message: 'This post has expired.' });
     }
 
-    return res.status(200).json({ success: true, post: formatPostRow(pRow) });
+    let paymentInfo = null;
+    if (isOwner) {
+      const [txRows] = await pool.query(
+        'SELECT * FROM payment_transactions WHERE post_id = ? ORDER BY id DESC LIMIT 1',
+        [postId]
+      );
+      if (txRows && txRows.length > 0) {
+        paymentInfo = txRows[0];
+      }
+    }
+
+    let isSaved = false;
+    if (user) {
+      const [savedRows] = await pool.query('SELECT id FROM saved_posts WHERE user_id = ? AND post_id = ? LIMIT 1', [user.id, postId]);
+      isSaved = savedRows && savedRows.length > 0;
+    }
+
+    return res.status(200).json({
+      success: true,
+      post: formatPostRow(pRow, isSaved, isOwner, paymentInfo)
+    });
   } catch (error) {
+    console.error('[Post Details Error]:', error.message);
     return res.status(500).json({ success: false, message: 'Error fetching post.' });
   }
 });
@@ -2806,13 +3038,39 @@ app.all(['/api/posts/:id/save', '/api/posts/:id/toggle-save'], authenticateUser,
 
 /**
  * POST /api/posts/:id/more-info-click (and /api/posts/:id/click)
- * Track "More Info" engagement click with atomic counter
+ * Track "More Info" engagement click with atomic counter and 4s cooldown deduplication
  */
+const moreInfoClickCooldown = new Map();
+
 app.post(['/api/posts/:id/more-info-click', '/api/posts/:id/click'], async (req, res) => {
   try {
     const rawId = req.params.id.toString().replace(/[^0-9]/g, '');
     const postId = parseInt(rawId, 10);
     if (isNaN(postId)) return res.status(400).json({ success: false, message: 'Invalid post ID.' });
+
+    // Client identifier for cooldown (user id or client ip)
+    const clientIdentifier = (req.headers['x-user-id'] || req.headers['x-user-email'] || req.ip || 'anonymous').toString().trim();
+    const cooldownKey = `post_${postId}_client_${clientIdentifier}`;
+    const now = Date.now();
+    const lastClickTime = moreInfoClickCooldown.get(cooldownKey);
+
+    // If clicked within last 4 seconds from same client, return current count without double incrementing
+    if (lastClickTime && (now - lastClickTime) < 4000) {
+      const [rows] = await pool.query('SELECT more_info_clicks FROM posts WHERE post_id = ? LIMIT 1', [postId]);
+      const currentClicks = rows && rows.length > 0 ? rows[0].more_info_clicks : 0;
+      return res.status(200).json({
+        success: true,
+        postId: `P${postId.toString().padStart(3, '0')}`,
+        moreInfoClickCount: currentClicks,
+        more_info_clicks: currentClicks,
+        debounced: true
+      });
+    }
+
+    moreInfoClickCooldown.set(cooldownKey, now);
+    if (moreInfoClickCooldown.size > 5000) {
+      moreInfoClickCooldown.clear();
+    }
 
     // Atomic increment for click count
     await pool.query('UPDATE posts SET more_info_clicks = more_info_clicks + 1 WHERE post_id = ?', [postId]);

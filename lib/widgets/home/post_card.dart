@@ -1,5 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../../services/auth_service.dart';
 import '../../services/post_service.dart';
 import '../business/cycling_post_image.dart';
 
@@ -29,6 +31,19 @@ class PostCard extends StatelessWidget {
   }) : item = (post ?? item)!;
 
   void _openFullScreenImage(BuildContext context, String imageUrl) {
+    // Increment more info engagement count for this post (debounced)
+    try {
+      final postService = Provider.of<PostService>(context, listen: false);
+      final authService = Provider.of<AuthService>(context, listen: false);
+      final user = authService.currentUser;
+      postService.trackMoreInfoClick(
+        item.postId,
+        authToken: user.authToken,
+        userId: user.userId,
+        userEmail: user.email,
+      );
+    } catch (_) {}
+
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -81,67 +96,146 @@ class PostCard extends StatelessWidget {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Target Location on Left
+                // If Owner: Target Location. If Viewer: Business Name
+                if (isOwner)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.location_on_rounded, size: 16, color: Color(0xFF4F46E5)),
+                      const SizedBox(width: 4),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 240),
+                        child: Text(
+                          item.displayLocation.isNotEmpty ? item.displayLocation : 'Target Location',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1F2937),
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  GestureDetector(
+                    onTap: onBusinessTap,
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.storefront_rounded, size: 16, color: Color(0xFF4F46E5)),
+                        const SizedBox(width: 5),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 240),
+                          child: Text(
+                            item.displayBizName.isNotEmpty ? item.displayBizName : 'Business',
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: Color(0xFF1F2937),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                // Right Section: Active / Expired Status Badge + Three-Dot Menu (if Owner)
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.location_on_rounded, size: 16, color: Color(0xFF4F46E5)),
-                    const SizedBox(width: 4),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 240),
-                      child: Text(
-                        item.displayLocation.isNotEmpty ? item.displayLocation : 'Target Location',
-                        style: const TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF1F2937),
+                    // Active / Expired Badge (displayed outside on every post card before three-dot)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7.5, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: item.isPostExpired
+                            ? const Color(0xFFFEE2E2)
+                            : (item.status == 'active' ? const Color(0xFFECFDF5) : const Color(0xFFFFFBEB)),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: item.isPostExpired
+                              ? const Color(0xFFFECACA)
+                              : (item.status == 'active' ? const Color(0xFFA7F3D0) : const Color(0xFFFDE68A)),
+                          width: 0.8,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: item.isPostExpired
+                                  ? const Color(0xFFEF4444)
+                                  : (item.status == 'active' ? const Color(0xFF10B981) : const Color(0xFFF59E0B)),
+                            ),
+                          ),
+                          const SizedBox(width: 4.5),
+                          Text(
+                            item.isPostExpired
+                                ? 'Expired'
+                                : (item.status == 'active' ? 'Active' : 'Pending'),
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: item.isPostExpired
+                                  ? const Color(0xFFDC2626)
+                                  : (item.status == 'active' ? const Color(0xFF047857) : const Color(0xFFB45309)),
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
+
+                    // Three-Dot Menu on Right (Visible to Business Owner)
+                    if (isOwner && (onEdit != null || onDelete != null)) ...[
+                      const SizedBox(width: 2),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF6B7280), size: 20),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        onSelected: (value) {
+                          if (value == 'edit' && onEdit != null) {
+                            onEdit!();
+                          } else if (value == 'delete' && onDelete != null) {
+                            onDelete!();
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          if (onEdit != null)
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.edit_outlined, size: 18, color: Color(0xFF4F46E5)),
+                                  SizedBox(width: 10),
+                                  Text('Edit', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
+                                ],
+                              ),
+                            ),
+                          if (onDelete != null)
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFEF4444)),
+                                  SizedBox(width: 10),
+                                  Text('Delete', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFFEF4444))),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
-
-                // Three-Dot Menu on Right (Visible to Business Owner)
-                if (isOwner && (onEdit != null || onDelete != null))
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert_rounded, color: Color(0xFF6B7280), size: 20),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    onSelected: (value) {
-                      if (value == 'edit' && onEdit != null) {
-                        onEdit!();
-                      } else if (value == 'delete' && onDelete != null) {
-                        onDelete!();
-                      }
-                    },
-                    itemBuilder: (context) => [
-                      if (onEdit != null)
-                        const PopupMenuItem(
-                          value: 'edit',
-                          child: Row(
-                            children: [
-                              Icon(Icons.edit_outlined, size: 18, color: Color(0xFF4F46E5)),
-                              SizedBox(width: 10),
-                              Text('Edit', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF111827))),
-                            ],
-                          ),
-                        ),
-                      if (onDelete != null)
-                        const PopupMenuItem(
-                          value: 'delete',
-                          child: Row(
-                            children: [
-                              Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFFEF4444)),
-                              SizedBox(width: 10),
-                              Text('Delete', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFFEF4444))),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
               ],
             ),
           ),
@@ -151,6 +245,19 @@ class PostCard extends StatelessWidget {
             onTap: onView,
             onLongPress: () {
               final activeImg = item.images.isNotEmpty ? item.images.first : (item.brandLogo ?? '');
+              if (activeImg.isNotEmpty) {
+                try {
+                  final postService = Provider.of<PostService>(context, listen: false);
+                  final authService = Provider.of<AuthService>(context, listen: false);
+                  final user = authService.currentUser;
+                  postService.trackMoreInfoClick(
+                    item.postId,
+                    authToken: user.authToken,
+                    userId: user.userId,
+                    userEmail: user.email,
+                  );
+                } catch (_) {}
+              }
               if (onImageLongPress != null && activeImg.isNotEmpty) {
                 onImageLongPress!(activeImg);
               } else if (activeImg.isNotEmpty) {
@@ -185,37 +292,40 @@ class PostCard extends StatelessWidget {
 
           // 3. Post Content (Title, Description)
           if (item.displayTitle.isNotEmpty || item.description.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (item.displayTitle.isNotEmpty)
-                    Text(
-                      item.displayTitle,
-                      style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFF111827),
-                        height: 1.3,
+            GestureDetector(
+              onTap: onView,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 4),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (item.displayTitle.isNotEmpty)
+                      Text(
+                        item.displayTitle,
+                        style: const TextStyle(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF111827),
+                          height: 1.3,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  if (item.description.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      item.description,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: Color(0xFF4B5563),
-                        height: 1.35,
+                    if (item.description.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        item.description,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: Color(0xFF4B5563),
+                          height: 1.35,
+                        ),
+                        maxLines: 3,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+                    ],
                   ],
-                ],
+                ),
               ),
             ),
 
@@ -235,7 +345,7 @@ class PostCard extends StatelessWidget {
                         const Icon(Icons.access_time_rounded, size: 14, color: Color(0xFF9CA3AF)),
                         const SizedBox(width: 4),
                         Text(
-                          item.timeAgo,
+                          item.calculatedTimeAgo,
                           style: const TextStyle(
                             fontSize: 11.5,
                             fontWeight: FontWeight.w500,

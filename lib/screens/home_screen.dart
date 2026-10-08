@@ -36,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _searchFocusNode = FocusNode();
   Timer? _searchDebounceTimer;
   bool _isInitialLoaded = false;
+  bool _isSearchOpen = false;
   String _searchQuery = '';
   bool _isSearchFocused = false;
   bool _isSearching = false;
@@ -54,6 +55,30 @@ class _HomeScreenState extends State<HomeScreen> {
         _isSearchFocused = _searchFocusNode.hasFocus;
       });
     }
+  }
+
+  void _openSearch() {
+    setState(() {
+      _isSearchOpen = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _searchFocusNode.requestFocus();
+      }
+    });
+  }
+
+  void _closeSearch() {
+    _searchDebounceTimer?.cancel();
+    _searchController.clear();
+    _searchFocusNode.unfocus();
+    setState(() {
+      _isSearchOpen = false;
+      _isSearchFocused = false;
+      _searchQuery = '';
+      _searchResults = [];
+      _isSearching = false;
+    });
   }
 
   void _onSearchChanged(String val) {
@@ -195,7 +220,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isSearchActive = _isSearchFocused || _searchController.text.isNotEmpty;
+    final isSearchActive = _isSearchOpen || _isSearchFocused || _searchController.text.isNotEmpty;
     // System back will only close the application if the user is on the Explore tab (index 1) and search is inactive
     final canPopRoot = _currentBottomNavIndex == 1 && !isSearchActive;
 
@@ -206,11 +231,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // 1. If search is active/focused, dismiss search first and stay on Explore
         if (isSearchActive) {
-          _searchFocusNode.unfocus();
-          _clearSearch();
-          setState(() {
-            _isSearchFocused = false;
-          });
+          _closeSearch();
           return;
         }
 
@@ -250,6 +271,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: CustomBottomNavigation(
                   currentIndex: _currentBottomNavIndex,
                   onTap: (index) {
+                    if (isSearchActive) {
+                      _closeSearch();
+                    }
                     if (index == _currentBottomNavIndex) {
                       if (index == 1) {
                         // Active Explore tab tapped -> Directly check business profile & open New Post flow
@@ -653,318 +677,405 @@ class _HomeScreenState extends State<HomeScreen> {
         ? TextUtils.capitalizeWords(user.name.trim().split(' ').first)
         : 'User';
 
-    final isSearchActive = _isSearchFocused || _searchController.text.isNotEmpty;
+    final isSearchActive = _isSearchOpen || _isSearchFocused || _searchController.text.isNotEmpty;
 
     return Stack(
       children: [
-          // ==========================================
-          // 1. CARD STACK AREA: Tinder-Style Horizontal Swipe Deck
-          // ==========================================
-          Column(
-            children: [
-              // Spacer corresponding to header height
-              const SizedBox(height: 124),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.only(bottom: 74), // Spacing above scooped bottom nav
-                  child: isLoading && allPosts.isEmpty
-                      ? const Center(
-                          child: CircularProgressIndicator(color: Color(0xFF4F46E5)),
-                        )
-                      : allPosts.isEmpty
-                          ? Center(
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(horizontal: 24),
-                                child: EmptyStateWidget(
-                                  icon: Icons.location_off_rounded,
-                                  title: 'No posts in your area yet',
-                                  subtitle:
-                                      'Posts targeting ${_formatUserLocationDisplay(user)} will appear here once published by businesses.',
-                                ),
+        // ==========================================
+        // 1. CARD STACK AREA: Tinder-Style Horizontal Swipe Deck
+        // ==========================================
+        Column(
+          children: [
+            // Spacer corresponding to single-row header height
+            const SizedBox(height: 72),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.only(bottom: 74), // Spacing above scooped bottom nav
+                child: isLoading && allPosts.isEmpty
+                    ? const Center(
+                        child: CircularProgressIndicator(color: Color(0xFF4F46E5)),
+                      )
+                    : allPosts.isEmpty
+                        ? Center(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 24),
+                              child: EmptyStateWidget(
+                                icon: Icons.location_off_rounded,
+                                title: 'No posts in your area yet',
+                                subtitle:
+                                    'Posts targeting ${_formatUserLocationDisplay(user)} will appear here once published by businesses.',
                               ),
-                            )
-                          : TinderCardDeck(
-                              posts: allPosts,
-                              totalCount: postService.totalCount,
-                              onReload: _loadInitialData,
-                              onMoreInfoClick: (post) {
-                                postService.trackMoreInfoClick(
-                                  post.postId,
-                                  authToken: user.authToken,
-                                  userId: user.userId,
-                                  userEmail: user.email,
-                                );
-                              },
-                              onToggleSave: (post) {
-                                postService.toggleSavePost(
-                                  post.postId,
-                                  authToken: user.authToken,
-                                  userId: user.userId,
-                                  userEmail: user.email,
-                                );
-                              },
-                              onBusinessTap: (post) {
-                                if (post.businessProfileId.isNotEmpty) {
-                                  Navigator.pushNamed(context, '/business-details', arguments: post.businessProfileId);
-                                }
-                              },
                             ),
-                ),
+                          )
+                        : TinderCardDeck(
+                            posts: allPosts,
+                            totalCount: postService.totalCount,
+                            onReload: _loadInitialData,
+                            onMoreInfoClick: (post) {
+                              postService.trackMoreInfoClick(
+                                post.postId,
+                                authToken: user.authToken,
+                                userId: user.userId,
+                                userEmail: user.email,
+                              );
+                            },
+                            onToggleSave: (post) {
+                              postService.toggleSavePost(
+                                post.postId,
+                                authToken: user.authToken,
+                                userId: user.userId,
+                                userEmail: user.email,
+                              );
+                            },
+                            onBusinessTap: (post) {
+                              if (post.businessProfileId.isNotEmpty) {
+                                Navigator.pushNamed(context, '/business-details', arguments: post.businessProfileId);
+                              }
+                            },
+                          ),
               ),
-            ],
-          ),
+            ),
+          ],
+        ),
 
-          // ==========================================
-          // 2. DIM / BLUR OVERLAY LAYER (When Search is Focused / Active)
-          // ==========================================
-          if (isSearchActive)
-            Positioned.fill(
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {
-                  _searchFocusNode.unfocus();
-                  setState(() {
-                    _isSearchFocused = false;
-                  });
-                },
-                child: Container(
-                  color: Colors.black.withOpacity(0.35),
-                  child: BackdropFilter(
-                    filter: ImageFilter.blur(sigmaX: 3.5, sigmaY: 3.5),
-                    child: Container(color: Colors.transparent),
-                  ),
+        // ==========================================
+        // 2. DIM / BLUR OVERLAY LAYER (When Search is Focused / Active)
+        // ==========================================
+        if (isSearchActive)
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _closeSearch,
+              child: Container(
+                color: Colors.black.withOpacity(0.35),
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 3.5, sigmaY: 3.5),
+                  child: Container(color: Colors.transparent),
                 ),
               ),
             ),
+          ),
 
-          // ==========================================
-          // 3. PINNED TOP HEADER + FOREGROUND SEARCH + SEARCH RESULTS
-          // ==========================================
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: isSearchActive
-                ? (MediaQuery.of(context).viewInsets.bottom > 0 ? MediaQuery.of(context).viewInsets.bottom : 74.0)
-                : null,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Top Header Card (Background and Search Bar)
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    boxShadow: isSearchActive
-                        ? [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.12),
-                              blurRadius: 16,
-                              offset: const Offset(0, 4),
-                            ),
-                          ]
-                        : null,
-                  ),
-                  padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Top Row: Left Image Logo + User Greeting/Location + Notification Bell
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          // 1. Left Corner Image Logo
-                          Container(
-                            width: 44,
-                            height: 44,
-                            decoration: BoxDecoration(
-                              color: const Color(0xFFF8FAFC),
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(12),
-                              child: Image.asset(
-                                'assets/images/explore_header.jpg',
-                                fit: BoxFit.contain,
-                                errorBuilder: (context, error, stackTrace) {
-                                  return const Icon(
-                                    Icons.campaign_rounded,
-                                    size: 26,
-                                    color: Color(0xFF4F46E5),
-                                  );
-                                },
-                              ),
-                            ),
+        // ==========================================
+        // 3. PINNED TOP HEADER + FOREGROUND SEARCH + SEARCH RESULTS
+        // ==========================================
+        Positioned(
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: isSearchActive
+              ? (MediaQuery.of(context).viewInsets.bottom > 0 ? MediaQuery.of(context).viewInsets.bottom : 74.0)
+              : null,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Top Header Card (Background and Animated Switcher Header)
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  boxShadow: isSearchActive
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.12),
+                            blurRadius: 16,
+                            offset: const Offset(0, 4),
                           ),
-                          const SizedBox(width: 12),
-
-                          // 2. Center Column: Hello, Username & Location below
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Text(
-                                  'Hello, $userDisplayName',
-                                  style: const TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.bold,
-                                    color: Color(0xFF111827),
-                                    letterSpacing: -0.3,
+                        ]
+                      : null,
+                ),
+                padding: const EdgeInsets.fromLTRB(18, 12, 18, 14),
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  transitionBuilder: (Widget child, Animation<double> animation) {
+                    return FadeTransition(
+                      opacity: animation,
+                      child: SlideTransition(
+                        position: Tween<Offset>(
+                          begin: const Offset(0, -0.04),
+                          end: Offset.zero,
+                        ).animate(animation),
+                        child: child,
+                      ),
+                    );
+                  },
+                  child: isSearchActive
+                      ? Row(
+                          key: const ValueKey('search_active_header'),
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // 1. Expanded Search Bar replacing Greeting & Location
+                            Expanded(
+                              child: Container(
+                                height: 44,
+                                decoration: BoxDecoration(
+                                  color: _isSearchFocused ? Colors.white : const Color(0xFFF3F4F6),
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: _isSearchFocused ? const Color(0xFF4F46E5) : const Color(0xFFE5E7EB),
+                                    width: _isSearchFocused ? 1.5 : 1,
                                   ),
+                                  boxShadow: _isSearchFocused
+                                      ? [
+                                          BoxShadow(
+                                            color: const Color(0xFF4F46E5).withOpacity(0.12),
+                                            blurRadius: 8,
+                                            offset: const Offset(0, 2),
+                                          ),
+                                        ]
+                                      : null,
                                 ),
-                                const SizedBox(height: 2),
-                                Row(
+                                child: Row(
                                   children: [
-                                    const Icon(
-                                      Icons.location_on_rounded,
-                                      size: 14,
-                                      color: Color(0xFF4F46E5),
+                                    const Padding(
+                                      padding: EdgeInsets.only(left: 12, right: 8),
+                                      child: Icon(
+                                        Icons.search_rounded,
+                                        color: Color(0xFF4F46E5),
+                                        size: 20,
+                                      ),
                                     ),
-                                    const SizedBox(width: 3),
                                     Expanded(
-                                      child: Text(
-                                        _formatUserLocationDisplay(user),
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
+                                      child: TextField(
+                                        controller: _searchController,
+                                        focusNode: _searchFocusNode,
+                                        onChanged: _onSearchChanged,
                                         style: const TextStyle(
-                                          fontSize: 12,
+                                          fontSize: 13.5,
                                           fontWeight: FontWeight.w500,
-                                          color: Color(0xFF6B7280),
+                                          color: Color(0xFF111827),
+                                        ),
+                                        decoration: const InputDecoration(
+                                          hintText: 'Search a category or shop/business',
+                                          hintStyle: TextStyle(
+                                            fontSize: 13,
+                                            color: Color(0xFF9CA3AF),
+                                            fontWeight: FontWeight.normal,
+                                          ),
+                                          border: InputBorder.none,
+                                          isDense: true,
+                                          contentPadding: EdgeInsets.symmetric(vertical: 10),
                                         ),
                                       ),
                                     ),
+                                    IconButton(
+                                      icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF6B7280)),
+                                      splashRadius: 18,
+                                      onPressed: () {
+                                        if (_searchController.text.isNotEmpty) {
+                                          _clearSearch();
+                                        } else {
+                                          _closeSearch();
+                                        }
+                                      },
+                                    ),
                                   ],
                                 ),
-                              ],
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
+                            const SizedBox(width: 8),
 
-                          // 3. Right: Notification Bell Button with badge
-                          Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              borderRadius: BorderRadius.circular(12),
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(builder: (_) => const NotificationsScreen()),
-                                );
-                              },
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF3F4F6),
-                                  borderRadius: BorderRadius.circular(12),
+                            // 2. Right: Notification Bell Button
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                                  );
+                                },
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF3F4F6),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      const Icon(
+                                        Icons.notifications_none_rounded,
+                                        color: Color(0xFF1F2937),
+                                        size: 21,
+                                      ),
+                                      if (notifService.unreadCount > 0)
+                                        Positioned(
+                                          top: 8,
+                                          right: 8,
+                                          child: Container(
+                                            width: 8,
+                                            height: 8,
+                                            decoration: const BoxDecoration(
+                                              color: Color(0xFFEF4444),
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                                 ),
-                                child: Stack(
-                                  alignment: Alignment.center,
-                                  children: [
-                                    const Icon(
-                                      Icons.notifications_none_rounded,
-                                      color: Color(0xFF1F2937),
-                                      size: 21,
+                              ),
+                            ),
+                          ],
+                        )
+                      : Row(
+                          key: const ValueKey('search_normal_header'),
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            // 1. Left Corner Image Logo
+                            Container(
+                              width: 44,
+                              height: 44,
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: Image.asset(
+                                  'assets/images/explore_header.jpg',
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return const Icon(
+                                      Icons.campaign_rounded,
+                                      size: 26,
+                                      color: Color(0xFF4F46E5),
+                                    );
+                                  },
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+
+                            // 2. Center Column: Hello, Username & Location below
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Text(
+                                    'Hello, $userDisplayName',
+                                    style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.bold,
+                                      color: Color(0xFF111827),
+                                      letterSpacing: -0.3,
                                     ),
-                                    if (notifService.unreadCount > 0)
-                                      Positioned(
-                                        top: 8,
-                                        right: 8,
-                                        child: Container(
-                                          width: 8,
-                                          height: 8,
-                                          decoration: const BoxDecoration(
-                                            color: Color(0xFFEF4444),
-                                            shape: BoxShape.circle,
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.location_on_rounded,
+                                        size: 14,
+                                        color: Color(0xFF4F46E5),
+                                      ),
+                                      const SizedBox(width: 3),
+                                      Expanded(
+                                        child: Text(
+                                          _formatUserLocationDisplay(user),
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w500,
+                                            color: Color(0xFF6B7280),
                                           ),
                                         ),
                                       ),
-                                  ],
-                                ),
+                                    ],
+                                  ),
+                                ],
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
+                            const SizedBox(width: 8),
 
-                      // 2. Foreground Search Bar with exact placeholder
-                      Container(
-                        height: 44,
-                        decoration: BoxDecoration(
-                          color: _isSearchFocused ? Colors.white : const Color(0xFFF3F4F6),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(
-                            color: _isSearchFocused ? const Color(0xFF4F46E5) : const Color(0xFFE5E7EB),
-                            width: _isSearchFocused ? 1.5 : 1,
-                          ),
-                          boxShadow: _isSearchFocused
-                              ? [
-                                  BoxShadow(
-                                    color: const Color(0xFF4F46E5).withOpacity(0.12),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
+                            // 3. Search Icon Button placed immediately BEFORE the Notification icon
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: _openSearch,
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF3F4F6),
+                                    borderRadius: BorderRadius.circular(12),
                                   ),
-                                ]
-                              : null,
-                        ),
-                        child: Row(
-                          children: [
-                            const Padding(
-                              padding: EdgeInsets.only(left: 12, right: 8),
-                              child: Icon(
-                                Icons.search_rounded,
-                                color: Color(0xFF4F46E5),
-                                size: 20,
-                              ),
-                            ),
-                            Expanded(
-                              child: TextField(
-                                controller: _searchController,
-                                focusNode: _searchFocusNode,
-                                onChanged: _onSearchChanged,
-                                style: const TextStyle(
-                                  fontSize: 13.5,
-                                  fontWeight: FontWeight.w500,
-                                  color: Color(0xFF111827),
-                                ),
-                                decoration: const InputDecoration(
-                                  hintText: 'Search a category or shop/business',
-                                  hintStyle: TextStyle(
-                                    fontSize: 13,
-                                    color: Color(0xFF9CA3AF),
-                                    fontWeight: FontWeight.normal,
+                                  child: const Center(
+                                    child: Icon(
+                                      Icons.search_rounded,
+                                      color: Color(0xFF1F2937),
+                                      size: 21,
+                                    ),
                                   ),
-                                  border: InputBorder.none,
-                                  isDense: true,
-                                  contentPadding: EdgeInsets.symmetric(vertical: 10),
                                 ),
                               ),
                             ),
-                            if (_searchController.text.isNotEmpty)
-                              IconButton(
-                                icon: const Icon(Icons.close_rounded, size: 18, color: Color(0xFF6B7280)),
-                                splashRadius: 18,
-                                onPressed: _clearSearch,
+                            const SizedBox(width: 8),
+
+                            // 4. Right: Notification Bell Button with badge
+                            Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(12),
+                                onTap: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => const NotificationsScreen()),
+                                  );
+                                },
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF3F4F6),
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Stack(
+                                    alignment: Alignment.center,
+                                    children: [
+                                      const Icon(
+                                        Icons.notifications_none_rounded,
+                                        color: Color(0xFF1F2937),
+                                        size: 21,
+                                      ),
+                                      if (notifService.unreadCount > 0)
+                                        Positioned(
+                                          top: 8,
+                                          right: 8,
+                                          child: Container(
+                                            width: 8,
+                                            height: 8,
+                                            decoration: const BoxDecoration(
+                                              color: Color(0xFFEF4444),
+                                              shape: BoxShape.circle,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
                               ),
+                            ),
                           ],
                         ),
-                      ),
-                    ],
-                  ),
                 ),
+              ),
 
-                // Search Results Dropdown List directly below Search Bar
-                if (isSearchActive)
-                  Expanded(
-                    child: _buildSearchResultsOverlay(),
-                  ),
-              ],
-            ),
+              // Search Results Dropdown List directly below Search Bar
+              if (isSearchActive)
+                Expanded(
+                  child: _buildSearchResultsOverlay(),
+                ),
+            ],
           ),
-        ],
-      );
+        ),
+      ],
+    );
   }
 
   Widget _buildSearchResultsOverlay() {

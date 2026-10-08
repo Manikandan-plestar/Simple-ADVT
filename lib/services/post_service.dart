@@ -4,6 +4,67 @@ import 'package:http/http.dart' as http;
 import 'api_client.dart';
 import '../models/target_location_model.dart';
 import '../utils/text_utils.dart';
+import '../utils/date_time_utils.dart';
+
+class PostPaymentDetails {
+  final String transactionId;
+  final String productId;
+  final String platform;
+  final int selectedDays;
+  final double amount;
+  final String currency;
+  final String paymentStatus;
+  final String verificationStatus;
+  final DateTime? paymentTime;
+  final DateTime? publishedAt;
+  final DateTime? expiresAt;
+
+  PostPaymentDetails({
+    required this.transactionId,
+    this.productId = '',
+    this.platform = '',
+    this.selectedDays = 1,
+    this.amount = 0.0,
+    this.currency = 'INR',
+    this.paymentStatus = 'completed',
+    this.verificationStatus = 'verified',
+    this.paymentTime,
+    this.publishedAt,
+    this.expiresAt,
+  });
+
+  factory PostPaymentDetails.fromJson(Map<String, dynamic> json) {
+    return PostPaymentDetails(
+      transactionId: json['transaction_id']?.toString() ?? json['transactionId']?.toString() ?? '',
+      productId: json['product_id']?.toString() ?? json['productId']?.toString() ?? '',
+      platform: json['platform']?.toString() ?? '',
+      selectedDays: json['selected_days'] ?? json['selectedDays'] ?? json['duration_days'] ?? 1,
+      amount: double.tryParse((json['amount'] ?? '0').toString()) ?? 0.0,
+      currency: json['currency']?.toString() ?? 'INR',
+      paymentStatus: json['payment_status']?.toString() ?? json['paymentStatus']?.toString() ?? 'completed',
+      verificationStatus: json['verification_status']?.toString() ?? json['verificationStatus']?.toString() ?? 'verified',
+      paymentTime: DateTimeUtils.parseUtc(json['payment_time'] ?? json['paymentTime']),
+      publishedAt: DateTimeUtils.parseUtc(json['published_at'] ?? json['publishedAt']),
+      expiresAt: DateTimeUtils.parseUtc(json['expires_at'] ?? json['expiresAt']),
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'transactionId': transactionId,
+      'productId': productId,
+      'platform': platform,
+      'selectedDays': selectedDays,
+      'amount': amount,
+      'currency': currency,
+      'paymentStatus': paymentStatus,
+      'verificationStatus': verificationStatus,
+      'paymentTime': paymentTime?.toIso8601String(),
+      'publishedAt': publishedAt?.toIso8601String(),
+      'expiresAt': expiresAt?.toIso8601String(),
+    };
+  }
+}
 
 class PostItem {
   final String postId;
@@ -26,6 +87,9 @@ class PostItem {
   final DateTime? publishedAt;
   final DateTime? expiresAt;
   final String? paymentId;
+  final DateTime? paymentTime;
+  final PostPaymentDetails? payment;
+  final bool isOwner;
   bool isSaved;
   int moreInfoClickCount;
   int savedCount;
@@ -52,10 +116,13 @@ class PostItem {
     this.publishedAt,
     this.expiresAt,
     this.paymentId,
+    this.paymentTime,
+    this.payment,
+    this.isOwner = false,
     this.isSaved = false,
     this.moreInfoClickCount = 0,
     this.savedCount = 0,
-  })  : createdAt = createdAt ?? DateTime.now(),
+  })  : createdAt = createdAt ?? DateTime.now().toUtc(),
         images = (images != null && images.isNotEmpty)
             ? images
             : (image != null && image.isNotEmpty ? [image] : []);
@@ -70,13 +137,12 @@ class PostItem {
   bool get isPostActive => status == 'active' && (expiresAt == null || expiresAt!.isAfter(DateTime.now()));
   bool get isPostExpired => status == 'expired' || (expiresAt != null && expiresAt!.isBefore(DateTime.now()));
 
-  String get formattedPostTime {
-    final t = publishedAt ?? createdAt;
-    final hour = t.hour % 12 == 0 ? 12 : t.hour % 12;
-    final minute = t.minute.toString().padLeft(2, '0');
-    final ampm = t.hour >= 12 ? 'PM' : 'AM';
-    return '$hour:$minute $ampm';
-  }
+  /// Formatted Time for post feed and header cards using user's device local timezone
+  String get formattedPostTime => DateTimeUtils.formatTime(publishedAt ?? createdAt);
+  String get formattedPublishedAt => DateTimeUtils.formatDateTime(publishedAt ?? createdAt);
+  String get formattedExpiresAt => DateTimeUtils.formatDateTime(expiresAt, placeholder: 'N/A');
+  String get formattedPaymentTime => DateTimeUtils.formatDateTime(payment?.paymentTime ?? paymentTime ?? publishedAt ?? createdAt);
+  String get calculatedTimeAgo => DateTimeUtils.calculateTimeAgo(publishedAt ?? createdAt);
 
   factory PostItem.fromJson(Map<String, dynamic> json) {
     final rawPostId = json['post_id'] ?? json['postId'] ?? 0;
@@ -130,25 +196,14 @@ class PostItem {
       }
     }
 
-    DateTime parsedCreatedAt = DateTime.now();
-    if (json['created_at'] != null || json['createdAt'] != null) {
-      try {
-        parsedCreatedAt = DateTime.parse((json['created_at'] ?? json['createdAt']).toString());
-      } catch (_) {}
-    }
+    DateTime parsedCreatedAt = DateTimeUtils.parseUtc(json['created_at'] ?? json['createdAt']) ?? DateTime.now().toUtc();
+    DateTime? parsedPublishedAt = DateTimeUtils.parseUtc(json['published_at'] ?? json['publishedAt']);
+    DateTime? parsedExpiresAt = DateTimeUtils.parseUtc(json['expires_at'] ?? json['expiresAt']);
+    DateTime? parsedPaymentTime = DateTimeUtils.parseUtc(json['payment_time'] ?? json['paymentTime']);
 
-    DateTime? parsedPublishedAt;
-    if (json['published_at'] != null || json['publishedAt'] != null) {
-      try {
-        parsedPublishedAt = DateTime.parse((json['published_at'] ?? json['publishedAt']).toString());
-      } catch (_) {}
-    }
-
-    DateTime? parsedExpiresAt;
-    if (json['expires_at'] != null || json['expiresAt'] != null) {
-      try {
-        parsedExpiresAt = DateTime.parse((json['expires_at'] ?? json['expiresAt']).toString());
-      } catch (_) {}
+    PostPaymentDetails? paymentDetails;
+    if (json['payment'] != null && json['payment'] is Map) {
+      paymentDetails = PostPaymentDetails.fromJson(Map<String, dynamic>.from(json['payment'] as Map));
     }
 
     final parsedClicks = json['moreInfoClickCount'] ?? json['more_info_click_count'] ?? json['more_info_clicks'] ?? 0;
@@ -156,6 +211,7 @@ class PostItem {
     final parsedDays = json['duration_days'] ?? json['durationDays'] ?? 1;
 
     final rawStatus = json['status']?.toString() ?? (json['is_active'] == 1 || json['is_active'] == true ? 'active' : 'pending_payment');
+    final isOwnerFlag = json['is_owner'] == true || json['isOwner'] == true;
 
     return PostItem(
       postId: formattedPostId,
@@ -169,7 +225,7 @@ class PostItem {
       description: json['description'] ?? '',
       images: imgList,
       brandLogo: json['brandLogo'] ?? json['brand_logo'] ?? json['business_profile_image'],
-      timeAgo: json['timeAgo'] ?? 'Just now',
+      timeAgo: json['timeAgo'] ?? DateTimeUtils.calculateTimeAgo(parsedPublishedAt ?? parsedCreatedAt),
       createdAt: parsedCreatedAt,
       targetLocation: json['targetLocation'] ?? json['target_location'],
       targetLocationItems: targetLocItems,
@@ -177,7 +233,10 @@ class PostItem {
       status: rawStatus,
       publishedAt: parsedPublishedAt,
       expiresAt: parsedExpiresAt,
-      paymentId: json['payment_id']?.toString() ?? json['paymentId']?.toString(),
+      paymentId: json['payment_id']?.toString() ?? json['paymentId']?.toString() ?? paymentDetails?.transactionId,
+      paymentTime: parsedPaymentTime ?? paymentDetails?.paymentTime,
+      payment: paymentDetails,
+      isOwner: isOwnerFlag,
       isSaved: (json['isSaved'] == true || json['is_saved'] == 1),
       moreInfoClickCount: parsedClicks is int ? parsedClicks : int.tryParse(parsedClicks.toString()) ?? 0,
       savedCount: parsedSaves is int ? parsedSaves : int.tryParse(parsedSaves.toString()) ?? 0,
@@ -206,6 +265,9 @@ class PostItem {
       'publishedAt': publishedAt?.toIso8601String(),
       'expiresAt': expiresAt?.toIso8601String(),
       'paymentId': paymentId,
+      'paymentTime': paymentTime?.toIso8601String(),
+      'payment': payment?.toJson(),
+      'isOwner': isOwner,
       'isSaved': isSaved,
       'moreInfoClickCount': moreInfoClickCount,
       'savedCount': savedCount,
@@ -340,6 +402,57 @@ class PostService extends ChangeNotifier {
     return _feedPosts;
   }
 
+  /// Fetch a single post by ID directly from backend (supports owner authentication to retrieve transaction details)
+  Future<PostItem?> fetchPostById(
+    String postId, {
+    String? authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
+    final cleanPostId = postId.replaceAll(RegExp(r'[^0-9]'), '');
+    if (cleanPostId.isEmpty) return null;
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
+      if (userId != null && userId.isNotEmpty) 'x-user-id': userId.replaceAll(RegExp(r'[^0-9]'), ''),
+      if (userEmail != null && userEmail.isNotEmpty) 'x-user-email': userEmail.trim(),
+    };
+
+    try {
+      final uri = Uri.parse('$_baseUrl/api/posts/$cleanPostId');
+      final response = await http.get(uri, headers: headers).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (data['success'] == true && data['post'] != null) {
+          final post = PostItem.fromJson(data['post'] as Map<String, dynamic>);
+          // Update in-memory collections if present
+          final feedIdx = _feedPosts.indexWhere((p) => p.postId == post.postId);
+          if (feedIdx != -1) {
+            _feedPosts[feedIdx] = post;
+          }
+          return post;
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('[PostService] Error fetching post by id ($postId): $e');
+      }
+    }
+    return null;
+  }
+
+  /// Helper to get all posts belonging to a specific business
+  List<PostItem> getPostsForBusiness(String businessId) {
+    final cleanBizId = businessId.replaceAll(RegExp(r'[^0-9]'), '');
+    return _feedPosts.where((p) {
+      if (p.businessProfileId == businessId) return true;
+      if (cleanBizId.isNotEmpty && p.businessProfileId.replaceAll(RegExp(r'[^0-9]'), '') == cleanBizId) return true;
+      return false;
+    }).toList();
+  }
+
   /// Fetch saved posts from backend for authenticated user
   Future<List<PostItem>> fetchSavedPosts({String? authToken, String? userId, String? userEmail}) async {
     _isLoading = true;
@@ -446,22 +559,35 @@ class PostService extends ChangeNotifier {
     }
   }
 
+  // Cooldown cache to debounce multiple clicks on the same post within 5 seconds
+  final Map<String, DateTime> _lastMoreInfoClickTimes = {};
+
   /// Track "More Info" button click engagement (Non-blocking / fire-and-forget)
   Future<void> trackMoreInfoClick(String postId, {String? authToken, String? userId, String? userEmail}) async {
-    // 1. Optimistically increment in-memory click count
-    final feedIndex = _feedPosts.indexWhere((p) => p.postId == postId);
-    if (feedIndex != -1) {
-      _feedPosts[feedIndex].moreInfoClickCount += 1;
-    }
-    final savedIndex = _savedPosts.indexWhere((p) => p.postId == postId);
-    if (savedIndex != -1) {
-      _savedPosts[savedIndex].moreInfoClickCount += 1;
-    }
-
-    // 2. Non-blocking network sync
     final cleanPostId = postId.replaceAll(RegExp(r'[^0-9]'), '');
     if (cleanPostId.isEmpty) return;
 
+    // Prevent double counting if tapped / long-pressed simultaneously or within 5s window
+    final now = DateTime.now();
+    final lastTime = _lastMoreInfoClickTimes[cleanPostId];
+    if (lastTime != null && now.difference(lastTime).inMilliseconds < 5000) {
+      debugPrint('[PostService] Debouncing More Info click for post $cleanPostId (already tracked recently).');
+      return;
+    }
+    _lastMoreInfoClickTimes[cleanPostId] = now;
+
+    // 1. Optimistically increment in-memory click count
+    final feedIndex = _feedPosts.indexWhere((p) => p.postId == postId || p.postId == 'P${cleanPostId.padLeft(3, '0')}');
+    if (feedIndex != -1) {
+      _feedPosts[feedIndex].moreInfoClickCount += 1;
+    }
+    final savedIndex = _savedPosts.indexWhere((p) => p.postId == postId || p.postId == 'P${cleanPostId.padLeft(3, '0')}');
+    if (savedIndex != -1) {
+      _savedPosts[savedIndex].moreInfoClickCount += 1;
+    }
+    notifyListeners();
+
+    // 2. Non-blocking network sync
     final headers = <String, String>{
       'Content-Type': 'application/json',
       if (authToken != null && authToken.isNotEmpty) 'Authorization': 'Bearer $authToken',
@@ -483,6 +609,7 @@ class PostService extends ChangeNotifier {
               if (savedIndex != -1 && savedIndex < _savedPosts.length) {
                 _savedPosts[savedIndex].moreInfoClickCount = newCount;
               }
+              notifyListeners();
             }
           } catch (_) {}
         }

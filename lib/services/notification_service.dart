@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'api_client.dart';
 import '../utils/text_utils.dart';
+import '../utils/date_time_utils.dart';
 
 class NotificationItem {
   final String notificationId;
@@ -68,12 +69,8 @@ class NotificationItem {
         json['isRead'] == true ||
         json['isRead'] == 1;
 
-    DateTime parsedDate = DateTime.now();
-    if (json['created_at'] != null || json['createdAt'] != null) {
-      try {
-        parsedDate = DateTime.parse((json['created_at'] ?? json['createdAt']).toString());
-      } catch (_) {}
-    }
+    final rawCreatedAt = json['created_at'] ?? json['createdAt'];
+    final DateTime parsedDate = DateTimeUtils.parseUtc(rawCreatedAt) ?? DateTime.now().toUtc();
 
     return NotificationItem(
       notificationId: formattedId,
@@ -88,7 +85,7 @@ class NotificationItem {
       type: json['type'] ?? 'new_business_post',
       title: json['title'] ?? 'Notification',
       message: json['message'] ?? '',
-      timeAgo: json['timeAgo'] ?? 'Just now',
+      timeAgo: DateTimeUtils.calculateTimeAgo(parsedDate),
       createdAt: parsedDate,
       isRead: readState,
     );
