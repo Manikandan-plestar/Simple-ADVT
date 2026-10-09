@@ -948,12 +948,12 @@ const POST_PRICING_CONFIG = {
   testMode: process.env.NODE_ENV !== 'production',
   defaultCurrency: 'INR',
   products: {
-    'advt_post_1_day': { days: 1, testPrice: 1.0, prodPrice: 100.0, name: '1 Day Post' },
-    'advt_post_2_days': { days: 2, testPrice: 2.0, prodPrice: 200.0, name: '2 Days Post' },
-    'advt_post_3_days': { days: 3, testPrice: 3.0, prodPrice: 300.0, name: '3 Days Post' },
-    'advt_post_7_days': { days: 7, testPrice: 7.0, prodPrice: 700.0, name: '7 Days Post' },
-    'advt_post_15_days': { days: 15, testPrice: 15.0, prodPrice: 1500.0, name: '15 Days Post' },
-    'advt_post_30_days': { days: 30, testPrice: 30.0, prodPrice: 3000.0, name: '30 Days Post' },
+    'advt_post_1_day': { days: 1, testPrice: 1.0, prodPrice: 99.0, name: '1 Day Post' },
+    'advt_post_2_days': { days: 2, testPrice: 2.0, prodPrice: 199.0, name: '2 Days Post' },
+    'advt_post_3_days': { days: 3, testPrice: 3.0, prodPrice: 299.0, name: '3 Days Post' },
+    'advt_post_7_days': { days: 7, testPrice: 7.0, prodPrice: 699.0, name: '7 Days Post' },
+    'advt_post_15_days': { days: 15, testPrice: 15.0, prodPrice: 1499.0, name: '15 Days Post' },
+    'advt_post_30_days': { days: 30, testPrice: 30.0, prodPrice: 2999.0, name: '30 Days Post' },
   }
 };
 
