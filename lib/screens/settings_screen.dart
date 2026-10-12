@@ -236,7 +236,7 @@ class SettingsScreen extends StatelessWidget {
                     ),
                     clipBehavior: Clip.antiAlias,
                     child: Image.asset(
-                      'assets/images/app_icon.png',
+                      'assets/images/app_icon_light.png',
                       fit: BoxFit.cover,
                     ),
                   ),

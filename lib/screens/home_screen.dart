@@ -950,7 +950,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(13),
                                 child: Image.asset(
-                                  'assets/images/app_icon.png',
+                                  'assets/images/app_icon_light.png',
                                   fit: BoxFit.cover,
                                   errorBuilder: (context, error, stackTrace) {
                                     return Container(
