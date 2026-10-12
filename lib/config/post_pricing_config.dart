@@ -30,7 +30,7 @@ class PostDurationOption {
 class PostPricingConfig {
   /// Toggle between testing pricing (₹1/day) and production pricing (₹100/day).
   /// Note: Real customer charge is always governed by the platform store product.
-  static const bool isProductionPricing = false;
+  static const bool isProductionPricing = true;
 
   /// Default currency
   static const String defaultCurrency = 'INR';
