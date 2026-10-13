@@ -31,8 +31,8 @@ const FROM_EMAIL = process.env.FROM_EMAIL || `"ADVT App" <${SMTP_USER || 'no-rep
 
 const JWT_SECRET = process.env.JWT_SECRET || 'simple_advt_jwt_super_secret_key_2026_xyz';
 const JWT_SECRET_PREVIOUS = process.env.JWT_SECRET_PREVIOUS || '';
-const ALLOW_LEGACY_IDENTITY = process.env.ALLOW_LEGACY_IDENTITY !== 'false'; // Default: true for backward compatibility
-const ENFORCE_PROFILE_AUTH = process.env.ENFORCE_PROFILE_AUTH === 'true'; // Default: false for backward compatibility
+const ALLOW_LEGACY_IDENTITY = process.env.ALLOW_LEGACY_IDENTITY === 'true'; // Default: false (strictly enforce JWT Bearer authentication)
+const ENFORCE_PROFILE_AUTH = process.env.ENFORCE_PROFILE_AUTH !== 'false'; // Default: true (strictly require login for profile queries to prevent PII leaks)
 const ENABLE_TEST_OTP = process.env.ENABLE_TEST_OTP === 'true' || process.env.NODE_ENV !== 'production';
 const TEST_OTP_ALLOWLIST_RAW = process.env.TEST_OTP_ALLOWLIST || 'plestarinc@gmail.com,test1@gmail.com,test2@gmail.com';
 const TEST_OTP_ALLOWLIST = TEST_OTP_ALLOWLIST_RAW.split(',').map(e => e.trim().toLowerCase()).filter(e => e.length > 0);
