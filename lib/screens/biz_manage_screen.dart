@@ -357,12 +357,44 @@ class _BizManageScreenState extends State<BizManageScreen> {
                                           ),
                                         ),
                                       ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFF9CA3AF)),
-                                        padding: EdgeInsets.zero,
-                                        constraints: const BoxConstraints(),
-                                        tooltip: 'Delete Post',
-                                        onPressed: () => _confirmDeletePost(context, post, activeBiz.businessProfileId),
+                                      Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (!post.isPostExpired && (post.status == 'pending_payment' || post.status == 'pending'))
+                                            Padding(
+                                              padding: const EdgeInsets.only(right: 6),
+                                              child: GestureDetector(
+                                                onTap: () {
+                                                  Navigator.pushNamed(context, '/post-details', arguments: post.postId);
+                                                },
+                                                child: Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                                                  decoration: BoxDecoration(
+                                                    color: const Color(0xFFD97706),
+                                                    borderRadius: BorderRadius.circular(6),
+                                                  ),
+                                                  child: const Row(
+                                                    mainAxisSize: MainAxisSize.min,
+                                                    children: [
+                                                      Icon(Icons.credit_card_rounded, color: Colors.white, size: 11),
+                                                      SizedBox(width: 4),
+                                                      Text(
+                                                        'Pay Now',
+                                                        style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Colors.white),
+                                                      ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          IconButton(
+                                            icon: const Icon(Icons.delete_outline_rounded, size: 18, color: Color(0xFF9CA3AF)),
+                                            padding: EdgeInsets.zero,
+                                            constraints: const BoxConstraints(),
+                                            tooltip: 'Delete Post',
+                                            onPressed: () => _confirmDeletePost(context, post, activeBiz.businessProfileId),
+                                          ),
+                                        ],
                                       ),
                                     ],
                                   ),

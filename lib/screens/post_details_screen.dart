@@ -241,6 +241,70 @@ class _PostDetailsScreenState extends State<PostDetailsScreen> {
     );
   }
 
+  Future<void> _payForPendingPost(BuildContext context) async {
+    final post = _post;
+    if (post == null) return;
+    final authService = Provider.of<AuthService>(context, listen: false);
+    final user = authService.currentUser;
+    final durationOption = PostPricingConfig.findByDays(post.durationDays);
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+            SizedBox(width: 12),
+            Text('Processing secure payment...'),
+          ],
+        ),
+        backgroundColor: Color(0xFF4F46E5),
+        duration: Duration(seconds: 4),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+
+    final purchaseResult = await InAppPurchaseService().buyPostSharing(
+      option: durationOption,
+      businessId: post.businessProfileId,
+      pendingPostId: post.postId,
+      authToken: user.authToken ?? '',
+      userId: user.userId,
+      userEmail: user.email,
+    );
+
+    if (!mounted) return;
+
+    if (purchaseResult.success) {
+      final PostItem activePost = (purchaseResult.serverResponse != null && purchaseResult.serverResponse!['post'] != null)
+          ? PostItem.fromJson(purchaseResult.serverResponse!['post'] as Map<String, dynamic>)
+          : post;
+
+      setState(() {
+        _post = activePost;
+      });
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dCtx) => PaymentSuccessDialog(
+          post: activePost,
+          transactionId: purchaseResult.transactionId,
+          onDismiss: () {
+            _fetchPostDetails();
+          },
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(purchaseResult.message ?? 'Payment failed or was cancelled.'),
+          backgroundColor: purchaseResult.isCancelled ? const Color(0xFF4B5563) : const Color(0xFFDC2626),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final authService = Provider.of<AuthService>(context);
@@ -588,6 +652,61 @@ class _PostDetailsScreenState extends State<PostDetailsScreen> {
                     ),
                   ],
 
+                  // Pending Payment Post Banner with Pay Now Action (Visible to Business Owner)
+                  if (isOwner && !isExpired && (post.status == 'pending_payment' || post.status == 'pending')) ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFFDE68A)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: const BoxDecoration(
+                              color: Color(0xFFFEF3C7),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.payment_rounded, color: Color(0xFFD97706), size: 20),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Payment Pending',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF92400E)),
+                                ),
+                                SizedBox(height: 2),
+                                Text(
+                                  'Payment is required to activate and share this post with users.',
+                                  style: TextStyle(fontSize: 11.5, color: Color(0xFFB45309), height: 1.25),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton.icon(
+                            onPressed: () => _payForPendingPost(context),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFFD97706),
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            icon: const Icon(Icons.credit_card_rounded, size: 16),
+                            label: const Text('Pay Now', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   // Unified Post Information Card (Title, Subtitle, Description, Target Location)
                   Container(
                     width: double.infinity,
@@ -698,9 +817,9 @@ class _PostDetailsScreenState extends State<PostDetailsScreen> {
                   const SizedBox(height: 20),
 
                   // ==========================================
-                  // 3. OWNER-ONLY PAYMENT & TRANSACTION DETAILS
+                  // 3. OWNER-ONLY PAYMENT & TRANSACTION DETAILS (Visible only after successful payment)
                   // ==========================================
-                  if (isOwner) ...[
+                  if (isOwner && post.status != 'pending_payment' && post.status != 'pending' && (post.isPostActive || post.isPostExpired)) ...[
                     _buildOwnerPaymentSection(context, post),
                     const SizedBox(height: 20),
                   ],

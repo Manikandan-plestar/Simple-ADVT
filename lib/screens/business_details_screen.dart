@@ -831,6 +831,15 @@ class _BusinessDetailsScreenState extends State<BusinessDetailsScreen> {
                             isOwner: isOwner,
                             onEdit: isOwner ? () => _openEditPostModal(context, post, biz) : null,
                             onDelete: isOwner ? () => _confirmDeletePost(context, post) : null,
+                            onPay: isOwner
+                                ? () {
+                                    Navigator.pushNamed(context, '/post-details', arguments: post.postId).then((_) {
+                                      if (mounted) {
+                                        _loadData();
+                                      }
+                                    });
+                                  }
+                                : null,
                             onImageLongPress: (img) => _showImageViewer(context, img),
                             onView: () {
                               Navigator.pushNamed(context, '/post-details', arguments: post.postId).then((_) {

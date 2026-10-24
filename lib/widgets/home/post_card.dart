@@ -14,6 +14,7 @@ class PostCard extends StatelessWidget {
   final VoidCallback? onToggleSave;
   final VoidCallback? onBookmarkTap;
   final VoidCallback? onBusinessTap;
+  final VoidCallback? onPay;
   final Function(String imageUrl)? onImageLongPress;
 
   PostCard({
@@ -24,6 +25,7 @@ class PostCard extends StatelessWidget {
     this.onView,
     this.onEdit,
     this.onDelete,
+    this.onPay,
     this.onToggleSave,
     this.onBookmarkTap,
     this.onBusinessTap,
@@ -192,6 +194,43 @@ class PostCard extends StatelessWidget {
                         ],
                       ),
                     ),
+
+                    // Pay Now Action Button for Pending Posts (Owner Only)
+                    if (isOwner && !item.isPostExpired && (item.status == 'pending_payment' || item.status == 'pending')) ...[
+                      const SizedBox(width: 6),
+                      GestureDetector(
+                        onTap: onPay ?? onView,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFD97706),
+                            borderRadius: BorderRadius.circular(6),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFFD97706).withOpacity(0.25),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.credit_card_rounded, color: Colors.white, size: 11),
+                              SizedBox(width: 4),
+                              Text(
+                                'Pay Now',
+                                style: TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
 
                     // Three-Dot Menu on Right (Visible to Business Owner)
                     if (isOwner && (onEdit != null || onDelete != null)) ...[
