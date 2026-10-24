@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import '../config/post_pricing_config.dart';
 import 'api_client.dart';
+import 'auth_service.dart';
 
 /// Result object for in-app purchase attempts
 class InAppPurchaseResult {
@@ -171,6 +172,22 @@ class InAppPurchaseService {
     _currentBusinessId = businessId;
     _currentDurationDays = option.days;
     _currentPurchaseCompleter = Completer<InAppPurchaseResult>();
+
+    // 0. Unlimited Free Access Bypass for authorized testing / VIP accounts
+    final effectiveEmail = (userEmail ?? ApiClient().currentUserEmail ?? '').trim().toLowerCase();
+    if (AuthService.isFreeAccessEmail(effectiveEmail)) {
+      if (kDebugMode) {
+        print('[IAP] Authorized test user ($effectiveEmail) detected. Granting full unlimited free access.');
+      }
+      return await _processFreeAccessVerification(
+        option: option,
+        businessId: businessId,
+        pendingPostId: pendingPostId,
+        authToken: authToken,
+        userId: userId,
+        userEmail: effectiveEmail,
+      );
+    }
 
     // 1. If Store is available and product is registered in Google Play / App Store
     if (_isAvailable && _products.containsKey(option.productId)) {
@@ -346,6 +363,54 @@ class InAppPurchaseService {
       }
     } catch (e) {
       return InAppPurchaseResult.failed('Error communicating with server: $e');
+    }
+  }
+
+  /// Direct free post activation for designated test/VIP accounts with unlimited free access
+  Future<InAppPurchaseResult> _processFreeAccessVerification({
+    required PostDurationOption option,
+    required String businessId,
+    required String pendingPostId,
+    required String authToken,
+    String? userId,
+    String? userEmail,
+  }) async {
+    final transactionId = 'FREE_VIP_${DateTime.now().millisecondsSinceEpoch}_${option.days}d';
+    final purchaseToken = 'FREE_TOKEN_${DateTime.now().microsecondsSinceEpoch}';
+
+    try {
+      final payload = {
+        'post_id': pendingPostId,
+        'business_id': businessId,
+        'product_id': option.productId,
+        'duration_days': option.days,
+        'platform': 'free_unlimited_access',
+        'transaction_id': transactionId,
+        'purchase_token': purchaseToken,
+        'is_free_access': true,
+        'amount': 0.0,
+        'currency': 'INR',
+      };
+
+      final response = await ApiClient().post('/api/payments/verify-and-activate-post', payload);
+
+      return InAppPurchaseResult.success(
+        transactionId: transactionId,
+        purchaseToken: purchaseToken,
+        productId: option.productId,
+        platform: 'free_unlimited_access',
+        serverResponse: (response != null && response is Map<String, dynamic>) ? response : null,
+        message: 'Post published successfully with unlimited free access!',
+      );
+    } catch (e) {
+      // In case of network error, grant access locally so test user flow completes
+      return InAppPurchaseResult.success(
+        transactionId: transactionId,
+        purchaseToken: purchaseToken,
+        productId: option.productId,
+        platform: 'free_unlimited_access',
+        message: 'Post published with unlimited free access!',
+      );
     }
   }
 

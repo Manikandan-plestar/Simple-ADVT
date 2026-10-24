@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'api_client.dart';
 import '../utils/text_utils.dart';
 import 'post_service.dart';
+import 'image_upload_service.dart';
 
 class BusinessProfile {
   final String businessProfileId; // Unique ID (e.g. BP001, BP101)
@@ -493,8 +494,9 @@ class BusinessService extends ChangeNotifier {
     String? userEmail,
   }) async {
     final cleanOwnerId = ownerUserId.trim();
-    final primaryImage = images.isNotEmpty
-        ? images.first
+    final uploadedImages = await ImageUploadService().uploadImages(images);
+    final primaryImage = uploadedImages.isNotEmpty
+        ? uploadedImages.first
         : "https://images.unsplash.com/photo-1441986300917-64674bd600d8?auto=format&fit=crop&w=600&q=80";
 
     if (authToken != null) _apiClient.setAuthToken(authToken);
@@ -513,7 +515,7 @@ class BusinessService extends ChangeNotifier {
       'latitude': latitude,
       'longitude': longitude,
       'profile_image': primaryImage,
-      'images': images,
+      'images': uploadedImages,
       'about': about.trim(),
     };
 
@@ -549,7 +551,7 @@ class BusinessService extends ChangeNotifier {
         latitude: latitude,
         longitude: longitude,
         image: primaryImage,
-        images: images.isNotEmpty ? images : [primaryImage],
+        images: uploadedImages.isNotEmpty ? uploadedImages : [primaryImage],
         about: about.isNotEmpty ? about.trim() : "Newly opened business profile.",
       );
     }
@@ -606,9 +608,11 @@ class BusinessService extends ChangeNotifier {
     biz.category = category.trim();
     biz.phone = phone.trim();
     biz.countryCode = countryCode.trim();
-    if (images.isNotEmpty) {
-      biz.images = List.from(images);
-      biz.image = images.first;
+
+    final uploadedImages = await ImageUploadService().uploadImages(images);
+    if (uploadedImages.isNotEmpty) {
+      biz.images = List.from(uploadedImages);
+      biz.image = uploadedImages.first;
     }
     biz.about = about.trim();
     notifyListeners();
@@ -627,8 +631,8 @@ class BusinessService extends ChangeNotifier {
           'category': category.trim(),
           'business_phone': phone.trim(),
           'country_code': countryCode.trim(),
-          'profile_image': images.isNotEmpty ? images.first : '',
-          'images': images,
+          'profile_image': uploadedImages.isNotEmpty ? uploadedImages.first : '',
+          'images': uploadedImages,
           'about': about.trim(),
         },
       );

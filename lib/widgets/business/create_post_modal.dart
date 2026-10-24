@@ -1,7 +1,9 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../config/post_pricing_config.dart';
 import '../../models/target_location_model.dart';
+import '../../services/auth_service.dart';
 import '../../services/device_image_picker_service.dart';
 import '../../services/in_app_purchase_service.dart';
 import '../../services/post_service.dart';
@@ -175,7 +177,17 @@ class _CreatePostModalState extends State<CreatePostModal> {
     }
   }
 
+  bool get _isFreeUser {
+    try {
+      final auth = Provider.of<AuthService>(context, listen: false);
+      return auth.currentUser.hasUnlimitedFreeAccess;
+    } catch (_) {
+      return false;
+    }
+  }
+
   String _getPriceDisplay(PostDurationOption option) {
+    if (_isFreeUser) return 'Free';
     return InAppPurchaseService().getPriceForOption(option);
   }
 
@@ -223,7 +235,8 @@ class _CreatePostModalState extends State<CreatePostModal> {
   @override
   Widget build(BuildContext context) {
     final isEditing = widget.initialPost != null && !widget.isReshare;
-    final activePriceText = _getPriceDisplay(_selectedDuration);
+    final isFree = _isFreeUser;
+    final activePriceText = isFree ? 'Free (Unlimited Access)' : _getPriceDisplay(_selectedDuration);
 
     return Container(
       decoration: const BoxDecoration(
@@ -555,12 +568,16 @@ class _CreatePostModalState extends State<CreatePostModal> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFEEF2FF),
+                      color: isFree ? const Color(0xFFDCFCE7) : const Color(0xFFEEF2FF),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
-                      'Store Price: $activePriceText',
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF4F46E5)),
+                      isFree ? 'Full Access: Free' : 'Store Price: $activePriceText',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: isFree ? const Color(0xFF15803D) : const Color(0xFF4F46E5),
+                      ),
                     ),
                   ),
                 ],
@@ -573,7 +590,7 @@ class _CreatePostModalState extends State<CreatePostModal> {
                 runSpacing: 8,
                 children: PostPricingConfig.supportedOptions.map((opt) {
                   final isSelected = _selectedDuration.days == opt.days;
-                  final priceText = _getPriceDisplay(opt);
+                  final priceText = isFree ? 'Free' : _getPriceDisplay(opt);
 
                   return InkWell(
                     onTap: () {
@@ -643,7 +660,7 @@ class _CreatePostModalState extends State<CreatePostModal> {
                       ],
                     ),
                     Text(
-                      'Amount: $activePriceText',
+                      isFree ? 'Amount: Free (Full Access)' : 'Amount: $activePriceText',
                       style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: Color(0xFF15803D)),
                     ),
                   ],
@@ -665,11 +682,14 @@ class _CreatePostModalState extends State<CreatePostModal> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
                 icon: Icon(
-                  isEditing ? Icons.save_rounded : Icons.lock_outline_rounded,
+                  isEditing ? Icons.save_rounded : (isFree ? Icons.send_rounded : Icons.lock_outline_rounded),
                   size: 18,
                 ),
                 label: Text(
-                  widget.submitButtonText ?? (isEditing ? 'Save Changes' : 'Pay & Share Post ($activePriceText)'),
+                  widget.submitButtonText ??
+                      (isEditing
+                          ? 'Save Changes'
+                          : (isFree ? 'Share Post (Unlimited Free Access)' : 'Pay & Share Post ($activePriceText)')),
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
                 ),
               ),

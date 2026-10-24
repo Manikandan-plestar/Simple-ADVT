@@ -18,6 +18,8 @@ class PaymentSuccessDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final publishedStr = DateTimeUtils.formatDateTime(post.publishedAt ?? post.createdAt);
     final expiryStr = DateTimeUtils.formatDateTime(post.expiresAt ?? (post.publishedAt != null ? post.publishedAt!.add(Duration(days: post.durationDays)) : post.createdAt.add(Duration(days: post.durationDays))));
+    final isFreeAccess = (transactionId != null && transactionId!.contains('FREE')) ||
+        (post.paymentId != null && post.paymentId!.contains('FREE'));
 
     return Dialog(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
@@ -47,9 +49,9 @@ class PaymentSuccessDialog extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            const Text(
-              'Payment Successful!',
-              style: TextStyle(
+            Text(
+              isFreeAccess ? 'Post Published Successfully!' : 'Payment Successful!',
+              style: const TextStyle(
                 fontSize: 20,
                 fontWeight: FontWeight.w800,
                 color: Color(0xFF111827),
@@ -57,10 +59,12 @@ class PaymentSuccessDialog extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            const Text(
-              'Your post is verified and now active.',
+            Text(
+              isFreeAccess
+                  ? 'Your post is now active with Unlimited Free Access.'
+                  : 'Your post is verified and now active.',
               textAlign: TextAlign.center,
-              style: TextStyle(
+              style: const TextStyle(
                 fontSize: 13,
                 color: Color(0xFF6B7280),
               ),
@@ -115,10 +119,12 @@ class PaymentSuccessDialog extends StatelessWidget {
                   if (transactionId != null && transactionId!.isNotEmpty) ...[
                     const Divider(height: 18, thickness: 0.8, color: Color(0xFFE5E7EB)),
                     _buildDetailRow(
-                      icon: Icons.receipt_long_rounded,
-                      label: 'Transaction ID',
-                      value: transactionId!,
-                      valueFontSize: 11,
+                      icon: isFreeAccess ? Icons.verified_user_rounded : Icons.receipt_long_rounded,
+                      label: isFreeAccess ? 'Access Tier' : 'Transaction ID',
+                      value: isFreeAccess ? 'Free Unlimited (VIP / Test)' : transactionId!,
+                      valueFontSize: isFreeAccess ? 13 : 11,
+                      valueColor: isFreeAccess ? const Color(0xFF10B981) : null,
+                      isBold: isFreeAccess,
                     ),
                   ],
                 ],

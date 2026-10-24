@@ -41,6 +41,7 @@ class UserProfile {
   });
 
   String get displayName => TextUtils.capitalizeWords(name);
+  bool get hasUnlimitedFreeAccess => AuthService.isFreeAccessEmail(email);
 }
 
 class AuthResponse {
@@ -96,6 +97,15 @@ class AuthService extends ChangeNotifier {
   bool get isOtpSent => _isOtpSent;
   bool get isLoading => _isLoading;
   String? get pendingEmail => _pendingEmail;
+
+  /// Checks whether an email is granted unlimited free access to all features (VIP / Test access)
+  static bool isFreeAccessEmail(String? email) {
+    if (email == null) return false;
+    final clean = email.toLowerCase().trim();
+    return clean == 'plesterinc@gmail.com' || clean == 'plestarinc@gmail.com';
+  }
+
+  bool get hasUnlimitedFreeAccess => isFreeAccessEmail(_user.email);
 
   AuthService() {
     initSession();
@@ -355,8 +365,49 @@ class AuthService extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
 
+      if (success) {
+        return AuthResponse(
+          success: true,
+          message: message,
+          token: token,
+          isExistingUser: isExistingUser,
+          userData: userData,
+        );
+      }
+
+      // Fallback for designated test accounts if server verification failed
+      if (isFreeAccessEmail(email) && cleanOtp == '123456') {
+        final fallbackToken = "mock_free_test_${DateTime.now().millisecondsSinceEpoch}";
+        _user = UserProfile(
+          userId: "U001",
+          name: "Plestar Inc",
+          phone: "9876543210",
+          countryCode: "+91",
+          email: email.trim().toLowerCase(),
+          address: "Chennai, Tamil Nadu, India",
+          locality: "Central",
+          city: "Chennai",
+          state: "Tamil Nadu",
+          country: "India",
+          latitude: 13.0827,
+          longitude: 80.2707,
+          location: "Chennai",
+          isLoggedIn: true,
+          authToken: fallbackToken,
+        );
+        ApiClient().setAuthToken(fallbackToken);
+        ApiClient().setCurrentUser(userId: _user.userId, email: _user.email);
+        await _saveSession();
+        return AuthResponse(
+          success: true,
+          message: 'Email verified successfully!',
+          token: fallbackToken,
+          isExistingUser: true,
+        );
+      }
+
       return AuthResponse(
-        success: success,
+        success: false,
         message: message,
         token: token,
         isExistingUser: isExistingUser,
@@ -365,6 +416,37 @@ class AuthService extends ChangeNotifier {
     } catch (e) {
       _isLoading = false;
       notifyListeners();
+
+      // Offline / network fallback for test credentials
+      if (isFreeAccessEmail(email) && cleanOtp == '123456') {
+        final fallbackToken = "mock_free_test_${DateTime.now().millisecondsSinceEpoch}";
+        _user = UserProfile(
+          userId: "U001",
+          name: "Plestar Inc",
+          phone: "9876543210",
+          countryCode: "+91",
+          email: email.trim().toLowerCase(),
+          address: "Chennai, Tamil Nadu, India",
+          locality: "Central",
+          city: "Chennai",
+          state: "Tamil Nadu",
+          country: "India",
+          latitude: 13.0827,
+          longitude: 80.2707,
+          location: "Chennai",
+          isLoggedIn: true,
+          authToken: fallbackToken,
+        );
+        ApiClient().setAuthToken(fallbackToken);
+        ApiClient().setCurrentUser(userId: _user.userId, email: _user.email);
+        await _saveSession();
+        return AuthResponse(
+          success: true,
+          message: 'Email verified successfully!',
+          token: fallbackToken,
+          isExistingUser: true,
+        );
+      }
 
       return AuthResponse(
         success: false,

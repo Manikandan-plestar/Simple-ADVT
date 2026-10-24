@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'api_client.dart';
+import 'image_upload_service.dart';
 import '../models/target_location_model.dart';
 import '../utils/text_utils.dart';
 import '../utils/date_time_utils.dart';
@@ -637,7 +638,12 @@ class PostService extends ChangeNotifier {
     String? userId,
     String? userEmail,
   }) async {
-    final selectedImages = images ?? <String>[];
+    // 1. Upload any local device image files to the server so they become permanent public URLs
+    final uploadedImages = await ImageUploadService().uploadImages(images ?? <String>[]);
+    final uploadedBrandLogo = (brandLogo != null && brandLogo.isNotEmpty)
+        ? await ImageUploadService().uploadImageIfNeeded(brandLogo)
+        : null;
+
     final cleanBizId = businessProfileId.replaceAll(RegExp(r'[^0-9]'), '');
 
     final payload = {
@@ -647,8 +653,8 @@ class PostService extends ChangeNotifier {
       'description': description.trim(),
       'target_location': targetLocation ?? 'Tamil Nadu',
       'target_locations': targetLocationItems?.map((e) => e.toMap()).toList(),
-      'images': selectedImages,
-      'brand_logo': brandLogo,
+      'images': uploadedImages,
+      'brand_logo': uploadedBrandLogo,
       'duration_days': durationDays,
       'is_pending': true,
       'status': 'pending_payment',
@@ -690,8 +696,8 @@ class PostService extends ChangeNotifier {
       subtitle: subtitle,
       description: description,
       timeAgo: "Just now",
-      images: selectedImages,
-      brandLogo: brandLogo,
+      images: uploadedImages,
+      brandLogo: uploadedBrandLogo ?? brandLogo,
       targetLocation: targetLocation,
       targetLocationItems: targetLocationItems,
       durationDays: durationDays,
@@ -808,13 +814,18 @@ class PostService extends ChangeNotifier {
     String? userEmail,
   }) async {
     final cleanPostId = postId.replaceAll(RegExp(r'[^0-9]'), '');
+    List<String>? uploadedImages;
+    if (images != null) {
+      uploadedImages = await ImageUploadService().uploadImages(images);
+    }
+
     final payload = {
       'title': title.trim(),
       'subtitle': subtitle.trim(),
       'description': description.trim(),
       'target_location': targetLocation,
       'target_locations': targetLocationItems?.map((e) => e.toMap()).toList(),
-      if (images != null) 'images': images,
+      if (uploadedImages != null) 'images': uploadedImages,
     };
 
     final headers = <String, String>{

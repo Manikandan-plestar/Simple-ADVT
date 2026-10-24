@@ -22,6 +22,8 @@ class ApiClient {
   String? _currentUserEmail;
 
   String get baseUrl => _baseUrl.replaceAll(RegExp(r'/+$'), '');
+  String? get currentUserId => _currentUserId;
+  String? get currentUserEmail => _currentUserEmail;
 
   void setBaseUrl(String url) {
     _baseUrl = url.trim().replaceAll(RegExp(r'/+$'), '');

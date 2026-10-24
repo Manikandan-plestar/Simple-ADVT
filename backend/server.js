@@ -8,6 +8,7 @@ const jwt = require('jsonwebtoken');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
+const path = require('path');
 
 // Load environment variables from .env
 dotenv.config();
@@ -34,7 +35,7 @@ const JWT_SECRET_PREVIOUS = process.env.JWT_SECRET_PREVIOUS || '';
 const ALLOW_LEGACY_IDENTITY = process.env.ALLOW_LEGACY_IDENTITY === 'true'; // Default: false (strictly enforce JWT Bearer authentication)
 const ENFORCE_PROFILE_AUTH = process.env.ENFORCE_PROFILE_AUTH !== 'false'; // Default: true (strictly require login for profile queries to prevent PII leaks)
 const ENABLE_TEST_OTP = process.env.ENABLE_TEST_OTP === 'true' || process.env.NODE_ENV !== 'production';
-const TEST_OTP_ALLOWLIST_RAW = process.env.TEST_OTP_ALLOWLIST || 'plestarinc@gmail.com,test1@gmail.com,test2@gmail.com';
+const TEST_OTP_ALLOWLIST_RAW = process.env.TEST_OTP_ALLOWLIST || 'plestarinc@gmail.com,plesterinc@gmail.com,test1@gmail.com,test2@gmail.com';
 const TEST_OTP_ALLOWLIST = TEST_OTP_ALLOWLIST_RAW.split(',').map(e => e.trim().toLowerCase()).filter(e => e.length > 0);
 const VERIFY_PLAY_PURCHASES = process.env.VERIFY_PLAY_PURCHASES === 'true';
 
@@ -983,7 +984,7 @@ setInterval(runExpiredPostsCleanup, 60 * 1000);
 // ==========================================
 function isTestAccount(email) {
   const clean = (email || '').toLowerCase().trim();
-  if (clean === 'plestarinc@gmail.com') return true;
+  if (clean === 'plestarinc@gmail.com' || clean === 'plesterinc@gmail.com') return true;
   if (!ENABLE_TEST_OTP) return false;
   return TEST_OTP_ALLOWLIST.includes(clean);
 }
@@ -991,9 +992,15 @@ function isTestAccount(email) {
 function verifyTestCredentials(email, otp) {
   const cleanEmail = (email || '').toLowerCase().trim();
   const cleanOtp = (otp || '').toString().trim();
-  if (cleanEmail === 'plestarinc@gmail.com') return cleanOtp === '123456';
+  if (cleanEmail === 'plestarinc@gmail.com' || cleanEmail === 'plesterinc@gmail.com') return cleanOtp === '123456';
   if (!ENABLE_TEST_OTP) return false;
   return TEST_OTP_ALLOWLIST.includes(cleanEmail) && cleanOtp === '123456';
+}
+
+function isFreeUnlimitedAccount(email) {
+  const clean = (email || '').toLowerCase().trim();
+  if (clean === 'plestarinc@gmail.com' || clean === 'plesterinc@gmail.com') return true;
+  return TEST_OTP_ALLOWLIST.includes(clean);
 }
 
 function generate6DigitOtp() {
@@ -1191,8 +1198,79 @@ app.use((req, res, next) => {
 });
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '15mb' }));
+app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// Static uploads directory for post and business images
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+app.use('/uploads', express.static(UPLOADS_DIR));
+
+/**
+ * Helper to construct public URL for uploaded files
+ */
+function getPublicUrl(req, filename) {
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'https';
+  const host = req.get('host') || `apps.plestarinc.com:3009`;
+  return `${protocol}://${host}/uploads/${filename}`;
+}
+
+/**
+ * POST /api/upload-image
+ * Uploads Base64 image data to the server disk and returns a permanent public URL
+ */
+app.post('/api/upload-image', async (req, res) => {
+  try {
+    const { image, image_base64, base64, filename: origFilename, ext } = req.body;
+    const rawData = image || image_base64 || base64;
+
+    if (!rawData || typeof rawData !== 'string') {
+      return res.status(400).json({ success: false, message: 'Image base64 data is required.' });
+    }
+
+    let fileExt = 'png';
+    let base64Content = rawData;
+
+    const dataUriMatch = rawData.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+    if (dataUriMatch) {
+      fileExt = dataUriMatch[1].toLowerCase() === 'jpeg' ? 'jpg' : dataUriMatch[1].toLowerCase();
+      base64Content = dataUriMatch[2];
+    } else if (ext) {
+      fileExt = ext.replace(/^\./, '').toLowerCase();
+    } else if (origFilename && origFilename.includes('.')) {
+      fileExt = origFilename.split('.').pop().toLowerCase();
+    }
+
+    if (fileExt === 'jpeg') fileExt = 'jpg';
+    if (!['png', 'jpg', 'webp', 'gif'].includes(fileExt)) {
+      fileExt = 'png';
+    }
+
+    const buffer = Buffer.from(base64Content, 'base64');
+    if (buffer.length === 0) {
+      return res.status(400).json({ success: false, message: 'Invalid or empty image buffer.' });
+    }
+
+    const uniqueName = `img_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${fileExt}`;
+    const filePath = path.join(UPLOADS_DIR, uniqueName);
+    await fs.promises.writeFile(filePath, buffer);
+
+    const publicUrl = getPublicUrl(req, uniqueName);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Image uploaded successfully.',
+      filename: uniqueName,
+      url: publicUrl,
+      relative_url: `/uploads/${uniqueName}`
+    });
+  } catch (error) {
+    console.error('[Upload] Error saving image:', error.message);
+    return res.status(500).json({ success: false, message: 'Failed to upload image.' });
+  }
+});
 
 app.use((req, res, next) => {
   // Sanitize logged path to prevent logging sensitive query parameters like emails
@@ -1332,12 +1410,13 @@ app.post(['/api/verify-email-otp', '/api/verify-otp'], async (req, res) => {
     // Check if user already exists in users table
     let [userRows] = await pool.query(`SELECT * FROM users WHERE email = ? LIMIT 1`, [cleanEmail]);
 
-    if ((!userRows || userRows.length === 0) && cleanEmail === 'plestarinc@gmail.com') {
+    if ((!userRows || userRows.length === 0) && (cleanEmail === 'plestarinc@gmail.com' || cleanEmail === 'plesterinc@gmail.com')) {
       try {
         await pool.query(
           `INSERT INTO users (email, full_name, mobile_number, country_code, full_address, locality, city, state, country, latitude, longitude)
-           VALUES ('plestarinc@gmail.com', 'Demo User', '9876543210', '+91', 'Chennai, Tamil Nadu, India', 'Central', 'Chennai', 'Tamil Nadu', 'India', 13.0827, 80.2707)
-           ON DUPLICATE KEY UPDATE email = email`
+           VALUES (?, 'Plestar Inc', '9876543210', '+91', 'Chennai, Tamil Nadu, India', 'Central', 'Chennai', 'Tamil Nadu', 'India', 13.0827, 80.2707)
+           ON DUPLICATE KEY UPDATE email = email`,
+          [cleanEmail]
         );
         const [refetched] = await pool.query(`SELECT * FROM users WHERE email = ? LIMIT 1`, [cleanEmail]);
         userRows = refetched;
@@ -2395,14 +2474,20 @@ app.post(['/api/posts', '/api/posts/create-pending'], authenticateUser, async (r
 
     const postBrandLogo = bizRows[0].profile_image || null;
 
-    // Posts require successful payment verification before becoming active
-    const postStatus = 'pending_payment';
-    const isActive = 0;
+    // Check if user is granted full unlimited free access (e.g. plesterinc@gmail.com, plestarinc@gmail.com)
+    const userEmail = (req.user && req.user.email ? req.user.email : '').toLowerCase().trim();
+    const hasFreeUnlimited = isFreeUnlimitedAccount(userEmail);
+
+    const postStatus = hasFreeUnlimited ? 'active' : 'pending_payment';
+    const isActive = hasFreeUnlimited ? 1 : 0;
+    const publishedAt = hasFreeUnlimited ? new Date() : null;
+    const expiresAt = hasFreeUnlimited ? new Date(Date.now() + (selectedDays * 24 * 60 * 60 * 1000)) : null;
+    const paymentId = hasFreeUnlimited ? `FREE_VIP_${Date.now()}_${selectedDays}d` : null;
 
     const [result] = await pool.query(`
       INSERT INTO posts (
-        business_id, user_id, title, subtitle, description, target_location, target_locations_json, images, brand_logo, duration_days, status, is_active
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        business_id, user_id, title, subtitle, description, target_location, target_locations_json, images, brand_logo, duration_days, status, is_active, published_at, expires_at, payment_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, [
       cleanBizId,
       userId,
@@ -2415,10 +2500,34 @@ app.post(['/api/posts', '/api/posts/create-pending'], authenticateUser, async (r
       postBrandLogo,
       selectedDays,
       postStatus,
-      isActive
+      isActive,
+      publishedAt,
+      expiresAt,
+      paymentId
     ]);
 
     const newPostId = result.insertId;
+
+    if (hasFreeUnlimited) {
+      try {
+        await pool.query(`
+          INSERT INTO payment_transactions (
+            user_id, business_id, post_id, platform, product_id, transaction_id, purchase_token, selected_days, amount, currency, payment_status, verification_status, raw_verification_payload, payment_time
+          ) VALUES (?, ?, ?, 'free_unlimited_access', ?, ?, ?, ?, 0.00, 'INR', 'completed', 'verified', JSON_OBJECT('grant', 'full_free_access', 'email', ?), NOW())
+        `, [
+          userId,
+          cleanBizId,
+          newPostId,
+          `advt_post_${selectedDays}_day${selectedDays > 1 ? 's' : ''}`,
+          paymentId,
+          paymentId,
+          selectedDays,
+          userEmail
+        ]);
+      } catch (txErr) {
+        console.error('[Posts] Failed to record free audit tx:', txErr.message);
+      }
+    }
 
     const [insertedRows] = await pool.query(`
       SELECT p.*, b.business_name, b.profile_image AS business_profile_image
@@ -2429,7 +2538,9 @@ app.post(['/api/posts', '/api/posts/create-pending'], authenticateUser, async (r
 
     return res.status(201).json({
       success: true,
-      message: 'Pending post created. Please complete in-app payment to publish.',
+      message: hasFreeUnlimited
+        ? 'Post published successfully with unlimited free access!'
+        : 'Pending post created. Please complete in-app payment to publish.',
       post: formatPostRow(insertedRows[0], false, true)
     });
   } catch (error) {
@@ -2500,6 +2611,62 @@ app.post('/api/payments/verify-and-activate-post', authenticateUser, async (req,
     const currentPost = postRows[0];
     if (currentPost.business_id !== targetBizId) {
       return res.status(400).json({ success: false, message: 'Post does not belong to the specified business.' });
+    }
+
+    // Check if user is granted full unlimited free access (e.g. plesterinc@gmail.com, plestarinc@gmail.com)
+    const userEmail = (req.user && req.user.email ? req.user.email : '').toLowerCase().trim();
+    const hasFreeUnlimited = isFreeUnlimitedAccount(userEmail);
+
+    if (hasFreeUnlimited) {
+      const validatedDays = parseInt(duration_days || durationDays || 7, 10) || 7;
+      const serverPaymentTime = new Date();
+      const serverExpiresAt = new Date(serverPaymentTime.getTime() + (validatedDays * 24 * 60 * 60 * 1000));
+      const freeTxId = targetTxId && targetTxId.startsWith('FREE_') ? targetTxId : `FREE_VIP_${Date.now()}_${validatedDays}d`;
+
+      await pool.query(`
+        UPDATE posts
+        SET status = 'active',
+            is_active = 1,
+            duration_days = ?,
+            published_at = COALESCE(published_at, ?),
+            expires_at = ?,
+            payment_id = ?
+        WHERE post_id = ?
+      `, [validatedDays, serverPaymentTime, serverExpiresAt, freeTxId, targetPostId]);
+
+      try {
+        await pool.query(`
+          INSERT INTO payment_transactions (
+            user_id, business_id, post_id, platform, product_id, transaction_id, purchase_token, selected_days, amount, currency, payment_status, verification_status, raw_verification_payload, payment_time
+          ) VALUES (?, ?, ?, 'free_unlimited_access', ?, ?, ?, ?, 0.00, 'INR', 'completed', 'verified', JSON_OBJECT('grant', 'full_free_access', 'email', ?), NOW())
+          ON DUPLICATE KEY UPDATE payment_status = 'completed', verification_status = 'verified'
+        `, [
+          userId,
+          targetBizId,
+          targetPostId,
+          targetProductId || `advt_post_${validatedDays}_days`,
+          freeTxId,
+          targetToken || freeTxId,
+          validatedDays,
+          userEmail
+        ]);
+      } catch (txErr) {
+        console.error('[Payments] Failed to record free audit tx:', txErr.message);
+      }
+
+      const [refreshedRows] = await pool.query(`
+        SELECT p.*, b.business_name, b.profile_image AS business_profile_image
+        FROM posts p
+        LEFT JOIN business_profile b ON p.business_id = b.business_id
+        WHERE p.post_id = ? LIMIT 1
+      `, [targetPostId]);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Post payment verified and activated successfully with unlimited free access!',
+        post: formatPostRow(refreshedRows[0], false, true),
+        transaction: { transaction_id: freeTxId, amount: 0.00 }
+      });
     }
 
     // 3. Central Duration and Product Mapping Validation
